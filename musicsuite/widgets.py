@@ -151,13 +151,13 @@ class ProgressPanel(QWidget):
         self.bar.setMaximumHeight(20)
 
         self.text_label = QLabel("Готов к работе", self)
-        self.text_label.setStyleSheet("color:#4b5563;")
+        self.text_label.setProperty("role", "status")
         self.text_label.setMinimumWidth(text_width)
         self.text_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.text_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
         self.counter_label = QLabel("", self)
-        self.counter_label.setStyleSheet("color:#6b7280;")
+        self.counter_label.setProperty("role", "status")
         self.counter_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.counter_label.setMinimumWidth(96)
 

@@ -20,20 +20,33 @@ def main() -> int:
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication, QMessageBox
 
-    from musicsuite.main_window import STYLE_SHEET, MainWindow
+    from musicsuite.appicon import app_icon
+    from musicsuite.main_window import MainWindow
+    from musicsuite.theme import apply_theme
+    from musicsuite.version import APP_NAME, APP_VERSION, ORGANIZATION
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Музыкальные утилиты")
-    app.setOrganizationName("MusicTools")
+    app.setApplicationName(f"{APP_NAME} {APP_VERSION}")
+    app.setApplicationVersion(APP_VERSION)
+    app.setOrganizationName(ORGANIZATION)
+
+    # Иконка нужна и QApplication, и главному окну: первая даёт значок
+    # всем диалогам, второе — рамке окна и Alt+Tab.
+    icon = app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
 
     if sys.platform == "win32":
         app.setFont(QFont("Segoe UI", 9))
 
-    app.setStyleSheet(STYLE_SHEET)
+    # Стили собираются из системной палитры: приложение следует за темой
+    # Windows, но не полагается на её цвета для фонов — иначе на Win11
+    # с тёмной темой получался белый текст на светлом фоне.
+    apply_theme(app)
 
     try:
         window = MainWindow()

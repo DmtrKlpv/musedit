@@ -25,8 +25,15 @@ COL_NEW = 4
 COL_STATUS = 5
 COL_ACTION = 6
 
-COLOR_DONE = QColor("#15803d")
-COLOR_OLD = QColor("#b91c1c")
+# Цвета строк берутся из темы: на тёмном фоне зелёный #15803d нечитаем.
+def _color_done():
+    from ..theme import color as theme_color
+    return theme_color("row_done_fg")
+
+
+def _color_old():
+    from ..theme import color as theme_color
+    return theme_color("row_missing_fg")
 
 
 class TagsTab(BaseTab):
@@ -130,7 +137,7 @@ class TagsTab(BaseTab):
         layout.addWidget(self.table, 1)
 
         self.status_label = QLabel("Нажмите «Сканировать», чтобы найти правки.")
-        self.status_label.setStyleSheet("color:#6b7280;")
+        self.status_label.setProperty("role", "status")
         layout.addWidget(self.status_label)
 
         self.add_progress(layout)
@@ -205,6 +212,11 @@ class TagsTab(BaseTab):
         self.select_none_btn.setEnabled(False)
         self.export_btn.setEnabled(False)
 
+    def refresh_theme(self) -> None:
+        """Перерисовывает таблицу правок под текущую тему."""
+        if self._items:
+            self._fill_table()
+
     def _fill_table(self) -> None:
         self.table.blockSignals(True)
         self.table.clear()
@@ -224,9 +236,9 @@ class TagsTab(BaseTab):
             )
             if item.applied:
                 for column in (COL_FILE, COL_FIELD, COL_OLD, COL_NEW, COL_STATUS):
-                    row.setForeground(column, QBrush(COLOR_DONE))
+                    row.setForeground(column, QBrush(_color_done()))
             else:
-                row.setForeground(COL_OLD, QBrush(COLOR_OLD))
+                row.setForeground(COL_OLD, QBrush(_color_old()))
             row.setToolTip(COL_OLD, item.old_text)
             row.setToolTip(COL_NEW, item.new_text)
 
@@ -332,7 +344,7 @@ class TagsTab(BaseTab):
             row.setText(COL_STATUS, "Исправлено")
             row.setCheckState(COL_CHECK, Qt.Unchecked)
             for column in (COL_FILE, COL_FIELD, COL_OLD, COL_NEW, COL_STATUS):
-                row.setForeground(column, QBrush(COLOR_DONE))
+                row.setForeground(column, QBrush(_color_done()))
             self.table.blockSignals(False)
             widget = self.table.itemWidget(row, COL_ACTION)
             if isinstance(widget, QPushButton):
@@ -412,7 +424,7 @@ class TagsTab(BaseTab):
             row.setText(COL_STATUS, "Исправлено")
             row.setCheckState(COL_CHECK, Qt.Unchecked)
             for column in (COL_FILE, COL_FIELD, COL_OLD, COL_NEW, COL_STATUS):
-                row.setForeground(column, QBrush(COLOR_DONE))
+                row.setForeground(column, QBrush(_color_done()))
             self.table.blockSignals(False)
             widget = self.table.itemWidget(row, COL_ACTION)
             if isinstance(widget, QPushButton):

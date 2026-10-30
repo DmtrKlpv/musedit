@@ -3,85 +3,50 @@
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
-    QMainWindow, QMessageBox, QSplitter, QTabWidget, QVBoxLayout, QWidget,
+    QApplication, QMainWindow, QMessageBox, QSplitter, QTabWidget,
+    QVBoxLayout, QWidget,
 )
 
+from .appicon import app_icon
 from .console import ConsoleView
+from . import theme as app_theme
 from .tabs import (
     CueTab, DownloadHubTab, DuplicatesTab, PlaylistSearchTab, TagsTab,
     UpdatePlaylistTab,
 )
 
-APP_TITLE = "MusEdit 1.2.56"
+from .version import APP_TITLE, APP_VERSION, ORGANIZATION  # noqa: E402
 COLOR_LINK = "#5b21b6"
 COLOR_PRIMARY = "#2563eb"
 COLOR_PRIMARY_HOVER = "#1d4ed8"
 COLOR_PRIMARY_DISABLED = "#93c5fd"
 
-STYLE_SHEET = f"""
-QMainWindow {{ background: #f6f7f9; }}
-QTabWidget::pane {{ border: 1px solid #d9dde3; border-radius: 6px; background: #ffffff; }}
-QTabBar::tab {{
-    padding: 8px 16px; margin-right: 2px; border: 1px solid #d9dde3;
-    border-bottom: none; border-top-left-radius: 6px; border-top-right-radius: 6px;
-    background: #eef0f3; color: #3f4650;
-}}
-QTabBar::tab:selected {{ background: #ffffff; color: {COLOR_LINK}; font-weight: 600; }}
-QTabBar::tab:hover {{ background: #f4f5f7; }}
-QLineEdit, QPlainTextEdit, QComboBox, QSpinBox {{
-    padding: 5px 7px; border: 1px solid #cfd4db; border-radius: 5px; background: #ffffff;
-    selection-background-color: #d7d0f5;
-}}
-QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus, QSpinBox:focus {{
-    border-color: {COLOR_LINK};
-}}
-QLineEdit:disabled, QPlainTextEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
-    background: #f2f3f5; color: #8a919b;
-}}
-QPushButton {{
-    padding: 6px 14px; border: 1px solid #cfd4db; border-radius: 5px;
-    background: #ffffff; color: #2f3540;
-}}
-QPushButton:hover {{ background: #f2f3f6; border-color: #b9c0c9; }}
-QPushButton:pressed {{ background: #e8eaee; }}
-QPushButton:disabled {{ color: #9aa1ab; background: #f4f5f7; }}
-QPushButton#primary {{
-    background: {COLOR_PRIMARY}; border-color: {COLOR_PRIMARY}; color: #ffffff; font-weight: 600;
-}}
-QPushButton#primary:hover {{ background: {COLOR_PRIMARY_HOVER}; border-color: {COLOR_PRIMARY_HOVER}; }}
-QPushButton#primary:disabled {{ background: {COLOR_PRIMARY_DISABLED}; border-color: {COLOR_PRIMARY_DISABLED}; color: #eff6ff; }}
-QPushButton#modeSwitch {{
-    padding: 6px 18px; border: 1px solid #cfd4db; border-radius: 0;
-    background: #f4f5f7; color: #3f4650;
-}}
-QPushButton#modeSwitch:hover {{ background: #e9ebef; }}
-QPushButton#modeSwitch:checked {{
-    background: #ffffff; color: {COLOR_LINK}; font-weight: 600;
-    border-bottom: 2px solid {COLOR_PRIMARY};
-}}
-QPushButton#modeSwitch[segment="first"] {{
-    border-top-left-radius: 6px; border-bottom-left-radius: 6px;
-}}
-QPushButton#modeSwitch[segment="last"] {{
-    border-top-right-radius: 6px; border-bottom-right-radius: 6px;
-}}
-QGroupBox {{ border: 1px solid #d9dde3; border-radius: 6px; margin-top: 8px; padding-top: 8px; }}
-QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #3f4650; }}
-QHeaderView::section {{
-    background: #f2f4f7; border: none; border-bottom: 1px solid #d9dde3; padding: 5px;
-    color: #3f4650;
-}}
-QTreeWidget {{ border: 1px solid #d9dde3; border-radius: 5px; background: #ffffff; }}
-QTreeWidget::item:selected {{ background: #e9e4fa; color: #1f2430; }}
-QSplitter::handle {{ background: #d9dde3; }}
-QStatusBar {{ background: #eef0f3; color: #4b5563; }}
-"""
+# Таблица стилей больше не константа: она собирается из системной
+# палитры в musicsuite.theme.build_stylesheet(), поэтому подписи
+# остаются читаемыми и в светлой, и в тёмной теме Windows.
+
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # Стили собираются из системной палитры. Палитру и стиль виджетов
+        # не трогаем — приложение следует за темой Windows.
+        app_theme.apply_theme(QApplication.instance())
+
+        # При смене темы на лету перекрашиваем таблицы вкладок: цвета строк
+        # задаются объектами QColor, а не через QSS, поэтому сами не обновятся.
+        app_theme.theme_signals.changed.connect(self._on_theme_changed)
+
         self.setWindowTitle(APP_TITLE)
+
+        # Иконка в заголовке задаётся отдельно от .ico в EXE: Qt рисует
+        # рамку сам и ресурсы исполняемого файла не читает.
+        icon = app_icon()
+        if not icon.isNull():
+            self.setWindowIcon(icon)
+
         self.resize(1180, 860)
         self.setMinimumSize(940, 640)
 
@@ -130,6 +95,19 @@ class MainWindow(QMainWindow):
               "Весь вывод утилит отображается ниже.\n")
 
     # ------------------------------------------------------------------
+    def _on_theme_changed(self) -> None:
+        """Перекрашивает строки таблиц после смены системной темы."""
+        for tab in (self.download_hub_tab, self.update_playlist_tab,
+                    self.playlist_search_tab, self.tags_tab,
+                    self.cue_tab, self.duplicates_tab):
+            refresh = getattr(tab, "refresh_theme", None)
+            if callable(refresh):
+                try:
+                    refresh()
+                except Exception:  # noqa: BLE001 — тема не должна ломать окно
+                    pass
+
+    # ------------------------------------------------------------------
     def _mark_primary_buttons(self) -> None:
         for tab in (self.download_hub_tab, self.tags_tab, self.cue_tab,
                     self.duplicates_tab, self.update_playlist_tab,
@@ -166,7 +144,7 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(
             self, "О программе",
-            "<b>Музыкальные утилиты</b><br><br>"
+            f"<b>{APP_TITLE}</b><br><br>"
             "Единая панель для пяти инструментов:<br>"
             ""
             "• скачивание треков из Яндекс.Музыки с готовым плейлистом;<br>"
@@ -174,7 +152,8 @@ class MainWindow(QMainWindow):
             "• исправление кодировки тегов MP3;<br>"
             "• конвертация FLAC/APE + CUE в MP3;<br>"
             "• поиск дубликатов с удалением в Корзину.<br><br>"
-            "Все тяжёлые операции выполняются в фоновых потоках."
+            f"Все тяжёлые операции выполняются в фоновых потоках.<br><br>"
+            f"{ORGANIZATION}"
         )
 
     # ------------------------------------------------------------------

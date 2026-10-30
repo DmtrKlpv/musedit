@@ -16,6 +16,14 @@ hiddenimports += ["tqdm", "requests", "urllib.request", "zipfile", "tarfile"]
 datas = []
 datas += collect_data_files("yandex_music")
 
+# Иконка должна попасть внутрь сборки: приложение читает её во время
+# работы для setWindowIcon. Без этой строки в EXE окажется только
+# встроенный ресурс, а Qt его не видит.
+datas += [("musicsuite/assets/icon.ico", "assets"),
+          ("musicsuite/assets/icon.png", "assets")]
+
+ICON_PATH = "musicsuite/assets/icon.ico"
+
 a = Analysis(
     ["main.py"],
     pathex=[],
@@ -44,7 +52,8 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Музыкальные утилиты",
+    name="MusEdit",
+    icon=ICON_PATH,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -64,5 +73,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name="Музыкальные утилиты",
+    name="MusEdit",
 )

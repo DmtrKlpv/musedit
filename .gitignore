@@ -1,6 +1,5 @@
-/init.tok
+/build/
+/dist/
 /env/
-/duplicates_report.csv
-/dist/duplicates_report.csv
-/dist/init.tok
-/music_suite.zip
+/dist/ffmpeg_bin
+/dist/main.exe

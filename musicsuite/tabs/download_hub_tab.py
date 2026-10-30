@@ -30,9 +30,10 @@ COL_BITRATE = 1
 COL_SIZE = 2
 COL_STATUS = 3
 
-COLOR_OK = "#15803d"
-COLOR_SKIP = "#a16207"
-COLOR_ERROR = "#b91c1c"
+# Цвета статусов берутся из темы: на тёмном фоне тёмно-зелёный нечитаем.
+def _status_color(role: str) -> QColor:
+    from ..theme import color as theme_color
+    return theme_color(role)
 
 FORMATS = ("m3u8", "m3u", "pls", "xspf", "wpl")
 
@@ -315,15 +316,15 @@ class DownloadHubTab(BaseTab):
         item.setToolTip(COL_TITLE, str(row.get("title", "")))
 
         if status == "Скачано":
-            colour = COLOR_OK
+            colour = _status_color("row_new_fg")
         elif status == "Уже был":
-            colour = COLOR_SKIP
+            colour = _status_color("manual_border")
         elif status.startswith("Ошибка") or status == "Не найдено":
-            colour = COLOR_ERROR
+            colour = _status_color("row_missing_fg")
         else:
             colour = None
-        if colour:
-            item.setForeground(COL_STATUS, QBrush(QColor(colour)))
+        if colour is not None:
+            item.setForeground(COL_STATUS, QBrush(colour))
 
         self.tracks_tree.addTopLevelItem(item)
         self.tracks_tree.scrollToItem(item)

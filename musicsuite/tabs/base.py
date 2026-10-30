@@ -32,9 +32,14 @@ class BaseTab(QWidget):
         return form
 
     def make_hint(self, text: str) -> QLabel:
+        """Подсказка под формой.
+
+        Цвет не задаётся здесь: QSS красит QLabel[role="hint"] по системной
+        теме. Раньше был зашит #6b7280 — на тёмном фоне он нечитаем.
+        """
         label = QLabel(text)
         label.setWordWrap(True)
-        label.setStyleSheet("color:#6b7280; font-size:8pt;")
+        label.setProperty("role", "hint")
         return label
 
     def add_progress(self, layout: QVBoxLayout) -> ProgressPanel:

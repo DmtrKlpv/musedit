@@ -10,7 +10,7 @@ import os
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
+    QAbstractItemView, QCheckBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
     QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -31,6 +31,8 @@ COL_GROUP_COPIES = 1
 COL_FILE_PATH = 0
 COL_FILE_SIZE = 1
 COL_FILE_BITRATE = 2
+COL_FILE_MATCH = 3
+COL_FILE_ACTION = 4
 
 
 class DuplicatesTab(BaseTab):
@@ -51,14 +53,51 @@ class DuplicatesTab(BaseTab):
         form = self.make_form()
         self.dir_field = PathField("dir", "Папка, в которой искать дубликаты")
         form.addRow("Директория для поиска:", self.dir_field)
+
+        # Три независимых способа сравнения. SHA-256 включён всегда:
+        # совпадение содержимого — единственный признак, который не даёт
+        # ложных срабатываний.
+        modes_row = QHBoxLayout()
+        modes_row.setContentsMargins(0, 0, 0, 0)
+        modes_row.setSpacing(16)
+
+        self.sha_check = QCheckBox("По содержимому (SHA-256)")
+        self.sha_check.setChecked(True)
+        self.sha_check.setEnabled(False)
+        self.sha_check.setToolTip(
+            "Сравнение по SHA-256 всегда включено: это единственный способ, "
+            "который гарантирует одинаковое содержимое файлов."
+        )
+        modes_row.addWidget(self.sha_check)
+
+        self.name_check = QCheckBox("По имени файла")
+        self.name_check.setToolTip(
+            "Считать дубликатами файлы с одинаковым именем, даже если "
+            "содержимое разное. Полезно для поиска одной песни в разных "
+            "качествах."
+        )
+        modes_row.addWidget(self.name_check)
+
+        self.tags_check = QCheckBox("По mp3-тегам")
+        self.tags_check.setToolTip(
+            "Считать дубликатами файлы с одинаковыми исполнителем и названием "
+            "в тегах. Медленнее: теги читаются с диска."
+        )
+        modes_row.addWidget(self.tags_check)
+
+        modes_row.addStretch(1)
+        form.addRow("Сравнивать:", modes_row)
+
         layout.addLayout(form)
 
         layout.addWidget(self.make_hint(
-            "Дубликаты определяются по SHA-256 содержимого файла. "
+            "Дубликаты определяются по SHA-256 содержимого файла, а также "
+            "по имени файла или mp3-тегам — выберите способы выше. "
             "Слева — группы одинаковых файлов, справа — файлы выбранной группы "
             "с размером и битрейтом. Во время сканирования группы появляются "
             "по мере обнаружения. Кнопка удаления отправляет выбранный файл "
-            "в Корзину (библиотека send2trash), поэтому его можно восстановить."
+            "в Корзину (библиотека send2trash), поэтому его можно восстановить. "
+            "Кнопка «Удалить» есть в каждой строке правой таблицы."
         ))
 
         splitter = QSplitter(Qt.Horizontal, self)
@@ -70,15 +109,15 @@ class DuplicatesTab(BaseTab):
         left_layout.setSpacing(4)
         left_layout.addWidget(self._bold("Группы дубликатов"))
         self.groups_tree = QTreeWidget(left)
-        self.groups_tree.setHeaderLabels(["Файл", "Копий"])
+        self.groups_tree.setHeaderLabels(["Файл", "Совпадение", "Копий"])
         self.groups_tree.setRootIsDecorated(False)
         self.groups_tree.setAlternatingRowColors(True)
         self.groups_tree.setUniformRowHeights(True)
         self.groups_tree.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.groups_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.groups_tree.header().setSectionResizeMode(
-            1, QHeaderView.ResizeToContents
-        )
+        groups_header = self.groups_tree.header()
+        groups_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        groups_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        groups_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.groups_tree.currentItemChanged.connect(self._on_group_changed)
         left_layout.addWidget(self.groups_tree, 1)
 
@@ -89,19 +128,23 @@ class DuplicatesTab(BaseTab):
         right_layout.setSpacing(4)
         right_layout.addWidget(self._bold("Файлы в выбранной группе"))
         self.files_tree = QTreeWidget(right)
-        self.files_tree.setHeaderLabels(["Путь", "Размер", "Битрейт"])
+        self.files_tree.setHeaderLabels(
+            ["Путь", "Размер", "Битрейт", "Совпадение", ""]
+        )
         self.files_tree.setRootIsDecorated(False)
         self.files_tree.setAlternatingRowColors(True)
         self.files_tree.setUniformRowHeights(True)
         self.files_tree.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.files_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.files_tree.header().setSectionResizeMode(
-            1, QHeaderView.ResizeToContents
-        )
-        self.files_tree.header().setSectionResizeMode(
-            2, QHeaderView.ResizeToContents
-        )
-        self.files_tree.itemSelectionChanged.connect(self._on_file_selection)
+        files_header = self.files_tree.header()
+        files_header.setSectionResizeMode(COL_FILE_PATH, QHeaderView.Stretch)
+        files_header.setSectionResizeMode(COL_FILE_SIZE,
+                                          QHeaderView.ResizeToContents)
+        files_header.setSectionResizeMode(COL_FILE_BITRATE,
+                                          QHeaderView.ResizeToContents)
+        files_header.setSectionResizeMode(COL_FILE_MATCH,
+                                          QHeaderView.ResizeToContents)
+        files_header.setSectionResizeMode(COL_FILE_ACTION, QHeaderView.Fixed)
+        self.files_tree.setColumnWidth(COL_FILE_ACTION, 116)
         self.files_tree.itemDoubleClicked.connect(self._on_file_double_clicked)
         right_layout.addWidget(self.files_tree, 1)
 
@@ -110,21 +153,15 @@ class DuplicatesTab(BaseTab):
         splitter.setSizes([380, 620])
         layout.addWidget(splitter, 1)
 
-        self.trash_btn = QPushButton(
-            "Удалить выбранный файл в Корзину" if _HAS_SEND2TRASH
-            else "Удалить выбранный файл (без Корзины)", self
-        )
-        self.trash_btn.setMinimumHeight(32)
-        self.trash_btn.setEnabled(False)
-        self.trash_btn.clicked.connect(self.on_delete_selected)
-
+        # Кнопка удаления переехала в строки правой таблицы: так видно,
+        # какой именно файл удаляется, и не нужно сначала выделять строку.
         self.run_btn = ActionButton("Начать поиск", self, minimum_width=190)
         self.run_btn.clicked.connect(self.on_search)
 
-        layout.addLayout(action_row(self.trash_btn, self.run_btn))
+        layout.addLayout(action_row(self.run_btn))
 
         self.status_label = QLabel("Поиск ещё не выполнялся.")
-        self.status_label.setStyleSheet("color:#6b7280;")
+        self.status_label.setProperty("role", "status")
         layout.addWidget(self.status_label)
 
         self.add_progress(layout)
@@ -148,12 +185,19 @@ class DuplicatesTab(BaseTab):
         print("\n=== Поиск дубликатов ===")
         self.status_label.setText("Идёт сканирование...")
 
+        modes = [duplsearch.MODE_SHA256]
+        if self.name_check.isChecked():
+            modes.append(duplsearch.MODE_NAME)
+        if self.tags_check.isChecked():
+            modes.append(duplsearch.MODE_TAGS)
+
         self.start_task(
             lambda progress: duplsearch.find_duplicates(
-                directory, progress=progress,
+                directory, progress=progress, modes=modes,
                 on_group=lambda group, count: self.group_found.emit(group, count),
             ),
-            controls=[self.run_btn, self.dir_field, self.trash_btn],
+            controls=[self.run_btn, self.dir_field, self.name_check,
+                      self.tags_check],
             on_success=self._on_results,
             busy_text="Сканирование папки",
             busy_progress=True,
@@ -163,18 +207,22 @@ class DuplicatesTab(BaseTab):
         self.groups_tree.clear()
         self.files_tree.clear()
         self._groups = []
-        self.trash_btn.setEnabled(False)
 
     # ------------------------------------------------------------------
     def _append_group(self, group, count: int) -> None:
         """Добавляет найденную группу сразу, не дожидаясь конца сканирования."""
         self._groups.append(group)
-        item = QTreeWidgetItem([group["filename"], str(len(group["files"]))])
+        item = QTreeWidgetItem([
+            group["filename"],
+            group.get("match", "SHA256"),
+            str(len(group["files"])),
+        ])
         item.setData(0, Qt.UserRole, len(self._groups) - 1)
         item.setToolTip(0, group["filename"])
         self.groups_tree.addTopLevelItem(item)
 
-        self.status_label.setText(f"Найдено групп: {count}")
+        self.status_label.setText(f"Найдено групп: {count}, "
+                                  f"совпадение: {group.get('match', '—')}")
 
         if self.groups_tree.currentItem() is None:
             self.groups_tree.setCurrentItem(item)
@@ -207,7 +255,6 @@ class DuplicatesTab(BaseTab):
 
     def _on_group_changed(self, current, _previous) -> None:
         self.files_tree.clear()
-        self.trash_btn.setEnabled(False)
         if current is None:
             return
 
@@ -215,16 +262,39 @@ class DuplicatesTab(BaseTab):
         if not isinstance(index, int) or index >= len(self._groups):
             return
 
-        for entry in self._groups[index]["files"]:
+        group = self._groups[index]
+        match_label = group.get("match", "SHA256")
+
+        for entry in group["files"]:
             item = QTreeWidgetItem([
-                entry["path"], entry["size_str"], entry["bitrate"]
+                entry["path"],
+                entry["size_str"],
+                entry["bitrate"],
+                match_label,
+                "",
             ])
             item.setData(0, Qt.UserRole, entry["path"])
             item.setToolTip(0, entry["path"])
+            item.setToolTip(
+                COL_FILE_MATCH,
+                f"Способ, которым этот файл признан дубликатом: {match_label}"
+            )
             self.files_tree.addTopLevelItem(item)
 
-    def _on_file_selection(self) -> None:
-        self.trash_btn.setEnabled(bool(self.files_tree.selectedItems()))
+            # Кнопка «Удалить» в строке: не нужно выделять файл, чтобы
+            # отправить его в Корзину.
+            button = QPushButton("Удалить", self.files_tree)
+            button.setFixedWidth(100)
+            button.setFixedHeight(24)
+            button.setToolTip(
+                "Отправить этот файл в Корзину"
+                if _HAS_SEND2TRASH
+                else "Удалить этот файл с диска"
+            )
+            button.clicked.connect(
+                lambda _checked=False, p=entry["path"]: self.on_delete_path(p)
+            )
+            self.files_tree.setItemWidget(item, COL_FILE_ACTION, button)
 
     def _on_file_double_clicked(self, item, _column) -> None:
         path = item.data(0, Qt.UserRole)
@@ -235,25 +305,25 @@ class DuplicatesTab(BaseTab):
             try:
                 os.startfile(folder)  # Windows
             except AttributeError:
-                import subprocess
-                subprocess.Popen(["xdg-open", folder])
+                from ..subproc import popen
+                popen(["xdg-open", folder])
 
     # ------------------------------------------------------------------
-    def on_delete_selected(self) -> None:
-        items = self.files_tree.selectedItems()
-        if not items:
-            QMessageBox.information(
-                self, "Ничего не выбрано",
-                "Выберите файл, который нужно удалить."
-            )
-            return
+    def on_delete_path(self, path: str) -> None:
+        """Удаляет конкретный файл, выбранный кнопкой в строке.
 
-        path = items[0].data(0, Qt.UserRole)
-        if not path or not os.path.exists(path):
+        Раньше удаление шло по выделенной строке — сначала нужно было
+        кликнуть по файлу, потом нажать кнопку внизу. Теперь кнопка
+        в строке знает свой путь, и лишний шаг не нужен.
+        """
+        if not path:
+            return
+        if not os.path.exists(path):
             QMessageBox.warning(
                 self, "Файл недоступен",
                 "Выбранный файл не существует на диске."
             )
+            self._remove_from_results(path)
             return
 
         current = self.groups_tree.currentItem()
@@ -312,11 +382,14 @@ class DuplicatesTab(BaseTab):
 
         if not self._groups:
             self.status_label.setText("Дубликатов больше не осталось.")
-            self.trash_btn.setEnabled(False)
             return
 
         for index, group in enumerate(self._groups):
-            item = QTreeWidgetItem([group["filename"], str(len(group["files"]))])
+            item = QTreeWidgetItem([
+                group["filename"],
+                group.get("match", "SHA256"),
+                str(len(group["files"])),
+            ])
             item.setData(0, Qt.UserRole, index)
             self.groups_tree.addTopLevelItem(item)
 

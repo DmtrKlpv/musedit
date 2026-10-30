@@ -108,6 +108,9 @@ class ConsoleView(QWidget):
         self._pending = ""
         self._live_buffer = LineBuffer()
         self._live_active = False
+        # Позиция в документе, с которой началась «живая» строка.
+        # Нужна, чтобы при завершении удалить ровно её, не задев предыдущие.
+        self._live_start = None
 
         self.emitter = _StreamEmitter()
         self.emitter.text_ready.connect(self.feed)
@@ -120,11 +123,11 @@ class ConsoleView(QWidget):
         self.editor.setPlaceholderText(
             "Здесь появятся ошибки и информационные сообщения утилит."
         )
-        self.editor.setStyleSheet(
-            "QPlainTextEdit { background:#111418; color:#d6dde5;"
-            " font-family:Consolas,'Courier New',monospace; font-size:9pt;"
-            " border:1px solid #2b3138; }"
-        )
+        # Консоль остаётся тёмной в обеих темах — как в IDE: так привычнее
+        # читать лог, и цвета ANSI из скриптов рассчитаны на тёмный фон.
+        # Цвета берутся из темы, чтобы на тёмной теме рамка не выбивалась.
+        self.editor.setObjectName("consoleEditor")
+        self._apply_console_style()
 
         header = QHBoxLayout()
         title = QLabel("Системная консоль")
@@ -132,7 +135,7 @@ class ConsoleView(QWidget):
         header.addWidget(title)
 
         self.mode_label = QLabel("ошибки и сообщения")
-        self.mode_label.setStyleSheet("color:#6b7280;")
+        self.mode_label.setProperty("role", "status")
         header.addWidget(self.mode_label)
         header.addStretch(1)
 
@@ -161,6 +164,22 @@ class ConsoleView(QWidget):
         layout.setSpacing(6)
         layout.addLayout(header)
         layout.addWidget(self.editor, 1)
+
+    # ------------------------------------------------------------------
+    def _apply_console_style(self) -> None:
+        """Красит поле вывода цветами текущей темы."""
+        from .theme import tokens
+        t = tokens()
+        self.editor.setStyleSheet(
+            "QPlainTextEdit#consoleEditor {"
+            f" background: {t.console_bg}; color: {t.console_fg};"
+            " font-family: Consolas, 'Courier New', monospace; font-size: 9pt;"
+            f" border: 1px solid {t.console_border}; }}"
+        )
+
+    def refresh_theme(self) -> None:
+        """Вызывается главным окном после смены системной темы."""
+        self._apply_console_style()
 
     # ------------------------------------------------------------------
     def install(self) -> None:
@@ -220,11 +239,14 @@ class ConsoleView(QWidget):
         cursor.movePosition(QTextCursor.End)
 
         if self._live_active:
+            # Строка уже показана — перерисовываем её содержимое.
             block = cursor.block()
             cursor.setPosition(block.position())
             cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
             cursor.insertText(current)
         else:
+            # Запоминаем позицию ДО вставки: с неё начнётся живая строка.
+            self._live_start = len(self.editor.toPlainText())
             if not self.editor.document().isEmpty():
                 cursor.insertText("\n")
             cursor.insertText(current)
@@ -235,7 +257,27 @@ class ConsoleView(QWidget):
         self._scroll_if_needed()
 
     def _finish_live(self) -> None:
+        """Убирает «живую» строку перед добавлением её же как завершённой.
+
+        print() вызывает write() дважды: сначала текст, потом "\n".
+        После первого вызова строка показывается как незавершённая (живая),
+        после второго — добавляется обычным путём. Без удаления живой строки
+        она оставалась в поле, и каждая строка появлялась дважды — этот баг
+        был виден в конвертере CUE.
+        """
+        if (self._live_active and self._live_start is not None
+                and not self.editor.document().isEmpty()):
+            cursor = self.editor.textCursor()
+            # Возвращаем документ к состоянию до отрисовки живой строки:
+            # удаляем всё от запомненной позиции до конца.
+            cursor.setPosition(self._live_start)
+            cursor.movePosition(QTextCursor.End, QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
+            cursor.movePosition(QTextCursor.End)
+            self.editor.setTextCursor(cursor)
+
         self._live_active = False
+        self._live_start = None
         self._live_buffer.clear()
 
     # ------------------------------------------------------------------

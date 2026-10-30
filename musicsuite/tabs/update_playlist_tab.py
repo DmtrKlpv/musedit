@@ -31,10 +31,25 @@ COL_STATE = 0
 COL_TRACK = 1
 COL_PATH = 2
 
-BG_MISSING = QColor("#fde2e4")   # розовый: файла нет в папке
-BG_NEW = QColor("#e3f6e5")       # светло-зелёный: файла нет в плейлисте
-FG_MISSING = QColor("#9f1239")
-FG_NEW = QColor("#166534")
+# Цвета подсветки берутся из темы: значения зависят от светлой/тёмной схемы.
+def _bg_missing():
+    from ..theme import color as theme_color
+    return theme_color("row_missing_bg")
+
+
+def _bg_new():
+    from ..theme import color as theme_color
+    return theme_color("row_new_bg")
+
+
+def _fg_missing():
+    from ..theme import color as theme_color
+    return theme_color("row_missing_fg")
+
+
+def _fg_new():
+    from ..theme import color as theme_color
+    return theme_color("row_new_fg")
 
 STATE_TEXT = {
     "kept": "В плейлисте",
@@ -155,7 +170,7 @@ class UpdatePlaylistTab(BaseTab):
         layout.addWidget(self.counts_label)
 
         self.detail_label = QLabel("")
-        self.detail_label.setStyleSheet("color:#6b7280;")
+        self.detail_label.setProperty("role", "status")
         layout.addWidget(self.detail_label)
 
         option_row = QHBoxLayout()
@@ -239,7 +254,7 @@ class UpdatePlaylistTab(BaseTab):
             item.setToolTip(COL_TRACK, entry.original)
             item.setToolTip(COL_PATH, entry.matched or "файл не найден")
             if entry.state == "missing":
-                self._paint(item, BG_MISSING, FG_MISSING)
+                self._paint(item, _bg_missing(), _fg_missing())
             self.playlist_tree.addTopLevelItem(item)
 
         for entry in self._files:
@@ -251,7 +266,7 @@ class UpdatePlaylistTab(BaseTab):
             item.setToolTip(COL_TRACK, entry.display)
             item.setToolTip(COL_PATH, entry.full_path)
             if entry.state == "new":
-                self._paint(item, BG_NEW, FG_NEW)
+                self._paint(item, _bg_new(), _fg_new())
             self.folder_tree.addTopLevelItem(item)
 
         name = os.path.basename(self._result.playlist_path)
@@ -277,6 +292,11 @@ class UpdatePlaylistTab(BaseTab):
         for column in (COL_STATE, COL_TRACK, COL_PATH):
             item.setBackground(column, brush_bg)
             item.setForeground(column, brush_fg)
+
+    def refresh_theme(self) -> None:
+        """Перерисовывает строки: цвета фона зависят от системной темы."""
+        if self._entries or self._files:
+            self._fill_tables()
 
     # ------------------------------------------------------------------
     def on_update(self) -> None:

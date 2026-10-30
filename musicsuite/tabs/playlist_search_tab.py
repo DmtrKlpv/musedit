@@ -36,13 +36,10 @@ COL_NEW = 6          # Новый путь
 # Колонки с данными: перекрашиваются при подсветке, кнопки не трогаем.
 COL_DATA = (COL_TRACK, COL_OLD, COL_COUNT, COL_LINE, COL_NEW)
 
-COLOR_OK = "#15803d"
-COLOR_MISSING = "#b91c1c"
-
-BG_MISSING = QColor("#fde2e4")
-FG_MISSING = QColor("#9f1239")
-BG_DONE = QColor("#e3f6e5")
-FG_DONE = QColor("#166534")
+# Цвета строк берутся из темы: значения зависят от светлой/тёмной схемы.
+def _color(role: str) -> QColor:
+    from ..theme import color as theme_color
+    return theme_color(role)
 
 
 class PlaylistSearchTab(BaseTab):
@@ -151,7 +148,7 @@ class PlaylistSearchTab(BaseTab):
         self.status_label = QLabel(
             "Укажите плейлист, папку для поиска и нажмите «Начать сканирование»."
         )
-        self.status_label.setStyleSheet("color:#4b5563;")
+        self.status_label.setProperty("role", "status")
         layout.addWidget(self.status_label)
 
         buttons_row = QHBoxLayout()
@@ -199,6 +196,12 @@ class PlaylistSearchTab(BaseTab):
             "Параметры изменились — нажмите «Начать сканирование», "
             "чтобы пересчитать пути."
         )
+
+    def refresh_theme(self) -> None:
+        """Перерисовывает таблицу: цвета подсветки зависят от темы."""
+        if self._items:
+            self._fill_table()
+            self._update_change_all_state()
 
     def on_scan(self) -> None:
         """Запускает поиск по кнопке."""
@@ -303,8 +306,8 @@ class PlaylistSearchTab(BaseTab):
 
             if not row.new_path:
                 for column in COL_DATA:
-                    item.setBackground(column, QBrush(BG_MISSING))
-                    item.setForeground(column, QBrush(FG_MISSING))
+                    item.setBackground(column, QBrush(_color('row_missing_bg')))
+                    item.setForeground(column, QBrush(_color('row_missing_fg')))
             elif row.applied:
                 self._paint_done(item)
 
@@ -428,8 +431,8 @@ class PlaylistSearchTab(BaseTab):
 
             # Снимаем розовую подсветку: путь теперь есть.
             for column in COL_DATA:
-                item.setBackground(column, QBrush(QColor("#ffffff")))
-                item.setForeground(column, QBrush(QColor("#1f2430")))
+                item.setBackground(column, QBrush(_color("surface")))
+                item.setForeground(column, QBrush(_color("text")))
 
             self.table.scrollToItem(item, QAbstractItemView.EnsureVisible)
 
@@ -449,8 +452,12 @@ class PlaylistSearchTab(BaseTab):
         changed = bool(chosen) and bool(suggested) and chosen != suggested
 
         if changed:
+            from ..theme import tokens as theme_tokens
+            t = theme_tokens()
             combo.setStyleSheet(
-                "QComboBox { background: #fff4d6; border: 1px solid #d9a441; }"
+                f"QComboBox {{ background: {t.manual_bg};"
+                f" border: 1px solid {t.manual_border};"
+                f" color: {t.text}; }}"
             )
             if not combo.toolTip().startswith("Выбран вручную"):
                 combo.setToolTip(
@@ -489,17 +496,17 @@ class PlaylistSearchTab(BaseTab):
             # Выбранный вручную путь снимает розовую подсветку «не найден».
             if row.new_path:
                 for column in COL_DATA:
-                    item.setBackground(column, QBrush(QColor("#ffffff")))
-                    item.setForeground(column, QBrush(QColor("#1f2430")))
-                item.setForeground(COL_LINE, QBrush(QColor("#1f2430")))
+                    item.setBackground(column, QBrush(_color("surface")))
+                    item.setForeground(column, QBrush(_color("text")))
+                item.setForeground(COL_LINE, QBrush(_color("text")))
 
         self._update_change_all_state()
 
     @staticmethod
     def _paint_done(item: QTreeWidgetItem) -> None:
         for column in COL_DATA:
-            item.setBackground(column, QBrush(BG_DONE))
-            item.setForeground(column, QBrush(FG_DONE))
+            item.setBackground(column, QBrush(_color('row_done_bg')))
+            item.setForeground(column, QBrush(_color('row_done_fg')))
 
     # ------------------------------------------------------------------
     def on_change_one(self, row: engine.TrackRow) -> None:
