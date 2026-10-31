@@ -33,7 +33,6 @@ _ACTIVE_PROGRESS = None
 # Понятные подписи вместо «v0» и «320». Ключ — то, что видит пользователь,
 # значение — (режим, параметр): ("vbr", 0) → LAME VBR V0.
 QUALITY_PRESETS = {
-    "CBR 320 kbps — максимум": ("cbr", 320),
     "VBR V0 — максимум, ~245 kbps": ("vbr", 0),
     "VBR V1 — очень высокое, ~225 kbps": ("vbr", 1),
     "VBR V2 — оптимальное, ~190 kbps": ("vbr", 2),
@@ -42,6 +41,7 @@ QUALITY_PRESETS = {
     "VBR V5 — ниже среднего, ~130 kbps": ("vbr", 5),
     "VBR V6 — низкое, ~115 kbps": ("vbr", 6),
     "VBR V8 — очень низкое, ~85 kbps": ("vbr", 8),
+    "CBR 320 kbps — максимум": ("cbr", 320),
     "CBR 256 kbps — очень высокое": ("cbr", 256),
     "CBR 224 kbps — высокое": ("cbr", 224),
     "CBR 192 kbps — стандарт": ("cbr", 192),
@@ -50,7 +50,7 @@ QUALITY_PRESETS = {
     "CBR 96 kbps — минимальное": ("cbr", 96),
 }
 
-DEFAULT_QUALITY = "CBR 320 kbps — максимум"
+DEFAULT_QUALITY = "VBR V0 — максимум, ~245 kbps"
 
 # Старые значения CLI: принимаем, чтобы не ломать скрипты пользователей.
 _LEGACY_QUALITY = {

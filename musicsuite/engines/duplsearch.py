@@ -111,6 +111,184 @@ def get_name_key(path):
     return os.path.basename(path).strip().lower()
 
 
+# ---------------------------------------------------------------------------
+# CSV: сохранение и загрузка результатов
+# ---------------------------------------------------------------------------
+
+DEFAULT_CSV_NAME = "duplicates_report.csv"
+
+# Заголовки колонок. Импорт ищет их по имени, а не по номеру: если
+# пользователь переставит столбцы в Excel, чтение не сломается.
+CSV_COLUMNS = ("Название", "Папка", "Размер", "Битрейт", "Совпадение", "Группа")
+
+# Варианты заголовка на случай правок вручную
+_HEADER_ALIASES = {
+    "название": ("название", "файл", "name", "filename", "файл_имя"),
+    "папка": ("папка", "путь", "folder", "path", "директория"),
+    "размер": ("размер", "size"),
+    "битрейт": ("битрейт", "bitrate"),
+    "совпадение": ("совпадение", "match", "тип"),
+    "группа": ("группа", "group", "группа_id", "group_id"),
+}
+
+
+def _detect_delimiter(sample: str) -> str:
+    """Определяет разделитель: точка с запятой или запятая."""
+    first_line = sample.splitlines()[0] if sample.splitlines() else ""
+    if first_line.count(";") >= first_line.count(","):
+        return ";"
+    return ","
+
+
+def write_csv(groups, path: str) -> str:
+    """Сохраняет группы дубликатов в CSV. Возвращает полный путь.
+
+    Добавлена колонка «Группа»: без неё при импорте нельзя отличить две
+    разные группы с одинаковым именем файла и одним типом совпадения —
+    они слились бы в одну. Старые отчёты без этой колонки тоже читаются,
+    там группы восстанавливаются по соседним строкам.
+    """
+    path = os.path.abspath(path)
+    folder = os.path.dirname(path)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
+
+    with open(path, "w", newline="", encoding="utf-8-sig") as stream:
+        writer = csv.writer(stream, delimiter=";")
+        writer.writerow(CSV_COLUMNS)
+
+        for index, group in enumerate(groups, start=1):
+            match_label = group.get("match", "SHA256")
+            for entry in group.get("files", []):
+                writer.writerow([
+                    os.path.basename(entry.get("path", "")),
+                    os.path.dirname(entry.get("path", "")),
+                    entry.get("size_str", "N/A"),
+                    entry.get("bitrate", "N/A"),
+                    match_label,
+                    index,
+                ])
+    return path
+
+
+class CsvImportError(Exception):
+    """CSV не похож на отчёт о дубликатах."""
+
+
+def _map_columns(header):
+    """Сопоставляет заголовки файла с известными полями."""
+    mapping = {}
+    for position, raw in enumerate(header):
+        name = (raw or "").strip().lower().replace("ё", "е")
+        for field, aliases in _HEADER_ALIASES.items():
+            if name in aliases:
+                mapping[field] = position
+                break
+    return mapping
+
+
+def read_csv(path: str):
+    """Читает CSV с дубликатами и восстанавливает группы.
+
+    Понимает и новые отчёты (с колонкой «Группа»), и старые без неё.
+    Для старых группы собираются из подряд идущих строк с одинаковым
+    именем файла и типом совпадения — именно в таком порядке их писал
+    прежний экспорт.
+    """
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        raise CsvImportError(f"Файл не найден: {path}")
+
+    with open(path, "r", encoding="utf-8-sig", errors="replace") as stream:
+        sample = stream.read()
+    if not sample.strip():
+        raise CsvImportError("Файл пуст.")
+
+    delimiter = _detect_delimiter(sample)
+    rows = list(csv.reader(sample.splitlines(), delimiter=delimiter))
+    if not rows:
+        raise CsvImportError("Не удалось прочитать ни одной строки.")
+
+    header = rows[0]
+    mapping = _map_columns(header)
+    if "название" not in mapping or "папка" not in mapping:
+        raise CsvImportError(
+            "В файле нет колонок «Название» и «Папка». "
+            "Похоже, это не отчёт о дубликатах."
+        )
+
+    data_rows = [row for row in rows[1:] if any(cell.strip() for cell in row)]
+    if not data_rows:
+        raise CsvImportError("В файле нет строк с файлами.")
+
+    def cell(row, field, default=""):
+        position = mapping.get(field)
+        if position is None or position >= len(row):
+            return default
+        return row[position].strip()
+
+    # --- сборка групп ---
+    groups = []
+    current = None          # (ключ, группа)
+    has_group_column = "группа" in mapping
+
+    for row in data_rows:
+        filename = cell(row, "название")
+        folder = cell(row, "папка")
+        if not filename:
+            continue
+
+        match_label = cell(row, "совпадение") or "SHA256"
+        if match_label not in ("SHA256", "Имя", "Теги"):
+            match_label = "SHA256"
+
+        group_id = cell(row, "группа") if has_group_column else ""
+        key = group_id if group_id else f"{filename}\x00{match_label}"
+
+        full_path = os.path.join(folder, filename) if folder else filename
+        exists = os.path.isfile(full_path)
+
+        # Размер и битрейт берём с диска, если файл на месте: в CSV они
+        # могли устареть, а расчёт «сколько освободится» должен быть верным.
+        if exists:
+            size_bytes, size_str, bitrate = get_audio_info(full_path)
+        else:
+            size_bytes = 0
+            size_str = cell(row, "размер") or "N/A"
+            bitrate = cell(row, "битрейт") or "N/A"
+
+        entry = {
+            "path": full_path,
+            "size_bytes": size_bytes,
+            "size_str": size_str,
+            "bitrate": bitrate,
+            "exists": exists,
+        }
+
+        if current is None or current[0] != key:
+            group = {
+                "hash": hashlib.md5(
+                    f"{key}:{len(groups)}".encode("utf-8", "ignore")
+                ).hexdigest(),
+                "filename": filename,
+                "match": match_label,
+                "files": [],
+            }
+            groups.append(group)
+            current = (key, group)
+
+        current[1]["files"].append(entry)
+
+    # Группа из одной строки дубликатом не является
+    groups = [group for group in groups if len(group["files"]) > 1]
+
+    if not groups:
+        raise CsvImportError(
+            "В файле не нашлось групп с двумя и более файлами."
+        )
+    return groups
+
+
 def _collect_files(root_path):
     found = []
     for root, _, files in os.walk(root_path):
@@ -194,7 +372,6 @@ def find_duplicates(root_path, progress=None, on_group=None, modes=None):
         return []
 
     total_wasted_size = 0
-    csv_data = []
     groups = []
     covered = set()      # файлы, уже показанные в какой-либо группе
 
@@ -225,7 +402,6 @@ def find_duplicates(root_path, progress=None, on_group=None, modes=None):
 
             print(f"  {folder} {Colors.GRAY}{size_str} | {bitrate}{Colors.END}")
 
-            csv_data.append([filename, folder, size_str, bitrate, match_label])
             group_files.append({
                 "path": p,
                 "size_bytes": size_bytes,
@@ -260,14 +436,9 @@ def find_duplicates(root_path, progress=None, on_group=None, modes=None):
     print(f"\n{Colors.BOLD}{Colors.YELLOW}Можно освободить: "
           f"{wasted_mb} MB {Colors.END}")
 
-    csv_file = "duplicates_report.csv"
     try:
-        with open(csv_file, 'w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.writer(f, delimiter=';')
-            writer.writerow(['Название', 'Папка', 'Размер', 'Битрейт', 'Совпадение'])
-            writer.writerows(csv_data)
-        print(f"{Colors.CYAN}Отчет сохранен в: "
-              f"{os.path.abspath(csv_file)}{Colors.END}")
+        saved = write_csv(groups, DEFAULT_CSV_NAME)
+        print(f"{Colors.CYAN}Отчет сохранен в: {saved}{Colors.END}")
     except Exception as e:
         print(f"{Colors.RED}[x] Ошибка записи CSV: {e}{Colors.END}")
 

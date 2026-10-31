@@ -9,12 +9,15 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QBrush
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
+    QAbstractItemView, QCheckBox, QDialog, QFileDialog, QHBoxLayout,
+    QHeaderView, QLabel, QListWidget, QListWidgetItem, QMessageBox,
     QPushButton, QSplitter, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from ..engines import duplsearch
+from ..exclusions import ExclusionStore, describe, group_signature
 from ..widgets import ActionButton, PathField, action_row
 from .base import BaseTab
 
@@ -24,6 +27,12 @@ try:
 except Exception:
     send2trash = None
     _HAS_SEND2TRASH = False
+
+def _theme_color(role: str):
+    """Цвет из текущей темы для подсветки строк."""
+    from ..theme import color as theme_color
+    return theme_color(role)
+
 
 COL_GROUP_NAME = 0
 COL_GROUP_COPIES = 1
@@ -44,6 +53,10 @@ class DuplicatesTab(BaseTab):
         super().__init__(main_window, parent)
 
         self._groups = []
+        # Исключённые группы: «это не дубликаты». Хранятся между запусками,
+        # чтобы не отвлекать пользователя одним и тем же случаем каждый раз.
+        self.exclusions = ExclusionStore()
+        self._hidden_by_exclusion = 0
         self.group_found.connect(self._append_group)
 
         layout = QVBoxLayout(self)
@@ -119,6 +132,7 @@ class DuplicatesTab(BaseTab):
         groups_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         groups_header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.groups_tree.currentItemChanged.connect(self._on_group_changed)
+        self.groups_tree.itemSelectionChanged.connect(self._update_exclude_state)
         left_layout.addWidget(self.groups_tree, 1)
 
         # Правая панель: файлы группы
@@ -158,7 +172,49 @@ class DuplicatesTab(BaseTab):
         self.run_btn = ActionButton("Начать поиск", self, minimum_width=190)
         self.run_btn.clicked.connect(self.on_search)
 
+        # Загрузить отчёт, сохранённый в прошлый раз: сканировать заново
+        # не нужно, если список уже есть.
+        self.import_btn = QPushButton("Импортировать CSV…", self)
+        self.import_btn.setMinimumHeight(32)
+        self.import_btn.setToolTip(
+            "Открыть ранее сохранённый отчёт duplicates_report.csv "
+            "и продолжить работу с найденными группами."
+        )
+        self.import_btn.clicked.connect(self.on_import_csv)
+
+        # Пересобрать отчёт по текущему состоянию списка: после удаления
+        # файлов старый CSV содержит уже несуществующие пути.
+        self.recreate_btn = QPushButton("Пересоздать CSV…", self)
+        self.recreate_btn.setMinimumHeight(32)
+        self.recreate_btn.setEnabled(False)
+        self.recreate_btn.setToolTip(
+            "Сохранить отчёт заново по текущему списку. Удалённые файлы "
+            "в него уже не попадут."
+        )
+        self.recreate_btn.clicked.connect(self.on_recreate_csv)
+
+        # Исключить выбранную группу: файлы совпадают по имени или хешу,
+        # но это разные записи (например, версия с текстом и минус).
+        self.exclude_btn = QPushButton("Исключить группу", self)
+        self.exclude_btn.setMinimumHeight(32)
+        self.exclude_btn.setEnabled(False)
+        self.exclude_btn.setToolTip(
+            "Убрать выбранную группу из результатов и больше не показывать "
+            "её при поиске. Файлы на диске остаются нетронутыми."
+        )
+        self.exclude_btn.clicked.connect(self.on_exclude_group)
+
+        self.excluded_list_btn = QPushButton("Исключённые: 0", self)
+        self.excluded_list_btn.setMinimumHeight(32)
+        self.excluded_list_btn.setToolTip(
+            "Показать список исключённых групп и вернуть любую обратно."
+        )
+        self.excluded_list_btn.clicked.connect(self.on_show_exclusions)
+
         layout.addLayout(action_row(self.run_btn))
+        layout.addLayout(action_row(self.import_btn, self.recreate_btn))
+        layout.addLayout(action_row(self.exclude_btn,
+                                    self.excluded_list_btn))
 
         self.status_label = QLabel("Поиск ещё не выполнялся.")
         self.status_label.setProperty("role", "status")
@@ -207,10 +263,22 @@ class DuplicatesTab(BaseTab):
         self.groups_tree.clear()
         self.files_tree.clear()
         self._groups = []
+        # Счётчик скрытых обнуляем: он относится к текущему прогону,
+        # а исключения остаются в хранилище.
+        self._hidden_by_exclusion = 0
+        self.exclude_btn.setEnabled(False)
+        self._update_excluded_button()
 
     # ------------------------------------------------------------------
     def _append_group(self, group, count: int) -> None:
         """Добавляет найденную группу сразу, не дожидаясь конца сканирования."""
+        # Исключённые группы не показываем: пользователь уже решил,
+        # что дубликатами они не являются.
+        if self.exclusions.is_excluded(group):
+            self._hidden_by_exclusion += 1
+            self._update_excluded_button()
+            return
+
         self._groups.append(group)
         item = QTreeWidgetItem([
             group["filename"],
@@ -253,6 +321,313 @@ class DuplicatesTab(BaseTab):
             f"Отчёт сохранён в duplicates_report.csv"
         )
 
+    # ------------------------------------------------------------------
+    # Исключения
+    # ------------------------------------------------------------------
+    def _current_group(self):
+        """Группа, выбранная в левой таблице, или None."""
+        item = self.groups_tree.currentItem()
+        if item is None:
+            return None
+        index = item.data(0, Qt.UserRole)
+        if not isinstance(index, int) or index >= len(self._groups):
+            return None
+        return self._groups[index]
+
+    def _update_exclude_state(self) -> None:
+        """Кнопка исключения активна только при выбранной группе."""
+        self.exclude_btn.setEnabled(self._current_group() is not None)
+        self._update_excluded_button()
+
+    def _update_excluded_button(self) -> None:
+        """Счётчик исключённых групп на кнопке."""
+        total = len(self.exclusions)
+        text = f"Исключённые: {total}"
+        if self._hidden_by_exclusion and self._hidden_by_exclusion != total:
+            text += f" (скрыто {self._hidden_by_exclusion})"
+        self.excluded_list_btn.setText(text)
+        self.excluded_list_btn.setEnabled(True)
+
+    # ------------------------------------------------------------------
+    def on_exclude_group(self) -> None:
+        """Исключает выбранную группу из результатов и из будущих поисков."""
+        group = self._current_group()
+        if group is None:
+            QMessageBox.information(
+                self, "Группа не выбрана",
+                "Выберите группу в левом списке, которую нужно исключить."
+            )
+            return
+
+        names = ", ".join(sorted({
+            os.path.basename(e.get("path", "")) for e in group.get("files", [])
+        }))
+        paths = "\n".join(e.get("path", "") for e in group.get("files", []))
+
+        answer = QMessageBox.question(
+            self, "Исключить группу",
+            f"Исключить эту группу из дубликатов?\n\n"
+            f"Файлы: {names}\n"
+            f"Совпадение: {group.get('match', 'SHA256')}\n\n"
+            f"Файлы на диске останутся нетронутыми — они просто перестанут "
+            f"попадать в список дубликатов.\n\n{paths}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        self.exclusions.exclude(group)
+        print(f"[ИСКЛЮЧЕНО] {names} "
+              f"(совпадение: {group.get('match', 'SHA256')})")
+
+        # Убираем из текущего списка без повторного поиска
+        if group in self._groups:
+            index = self._groups.index(group)
+            self._groups.remove(group)
+            self._hidden_by_exclusion += 1
+            self._refill_groups(min(index, max(0, len(self._groups) - 1)))
+
+        self.status_label.setText(
+            f"Группа исключена. Осталось групп: {len(self._groups)}. "
+            f"Вернуть можно кнопкой «{self.excluded_list_btn.text()}»."
+        )
+        self._update_exclude_state()
+
+    # ------------------------------------------------------------------
+    def on_show_exclusions(self) -> None:
+        """Диалог со списком исключённых групп."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Исключённые группы")
+        dialog.resize(760, 460)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        hint = QLabel(
+            "Эти группы не считаются дубликатами и не показываются при "
+            "поиске. Вернуть группу обратно можно кнопкой ниже."
+        )
+        hint.setWordWrap(True)
+        hint.setProperty("role", "hint")
+        layout.addWidget(hint)
+
+        listing = QListWidget(dialog)
+        entries = list(self.exclusions.entries())
+        for signature, payload in entries:
+            stored_match = (payload.get("match") or "").strip()
+            match, names = describe(signature, stored_match)
+            match = match or "—"
+            # Одинаковые имена сворачиваем: «07 - Иод.mp3 ×2»
+            unique = list(dict.fromkeys(names))
+            shown = ", ".join(
+                f"{name} ×{names.count(name)}" if names.count(name) > 1
+                else name
+                for name in unique
+            )
+            label = f"[{match}] {shown}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, signature)
+            paths = payload.get("paths") or []
+            if paths:
+                item.setToolTip("\n".join(paths))
+            listing.addItem(item)
+        layout.addWidget(listing, 1)
+
+        if not entries:
+            empty = QLabel("Исключённых групп пока нет.")
+            empty.setProperty("role", "hint")
+            layout.addWidget(empty)
+
+        buttons = QHBoxLayout()
+
+        restore_btn = QPushButton("Вернуть выбранную", dialog)
+        restore_btn.setMinimumHeight(30)
+        restore_btn.setEnabled(bool(entries))
+
+        def restore() -> None:
+            current = listing.currentItem()
+            if current is None:
+                return
+            signature = current.data(Qt.UserRole)
+            if self.exclusions.restore(signature):
+                print(f"[ВОЗВРАТ] {signature}")
+                row = listing.row(current)
+                listing.takeItem(row)
+                if self._hidden_by_exclusion:
+                    self._hidden_by_exclusion -= 1
+                self._update_excluded_button()
+                self.status_label.setText(
+                    "Группа возвращена. Запустите поиск или импорт, "
+                    "чтобы увидеть её снова."
+                )
+
+        restore_btn.clicked.connect(restore)
+
+        clear_btn = QPushButton("Очистить все", dialog)
+        clear_btn.setMinimumHeight(30)
+        clear_btn.setEnabled(bool(entries))
+
+        def clear_all() -> None:
+            if not entries:
+                return
+            answer = QMessageBox.question(
+                dialog, "Очистить исключения",
+                f"Вернуть все группы ({len(entries)})? После этого они снова "
+                f"будут считаться дубликатами.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            )
+            if answer != QMessageBox.Yes:
+                return
+            self.exclusions.clear()
+            listing.clear()
+            self._hidden_by_exclusion = 0
+            self._update_excluded_button()
+            self.status_label.setText(
+                "Все исключения сняты. Запустите поиск заново."
+            )
+            clear_btn.setEnabled(False)
+            restore_btn.setEnabled(False)
+
+        clear_btn.clicked.connect(clear_all)
+
+        close_btn = QPushButton("Закрыть", dialog)
+        close_btn.setMinimumHeight(30)
+        close_btn.clicked.connect(dialog.accept)
+
+        buttons.addWidget(restore_btn)
+        buttons.addWidget(clear_btn)
+        buttons.addStretch(1)
+        buttons.addWidget(close_btn)
+        layout.addLayout(buttons)
+
+        dialog.exec()
+
+    # ------------------------------------------------------------------
+    def _refill_groups(self, select_index: int = 0) -> None:
+        """Перерисовывает список групп и правую таблицу из self._groups.
+
+        Общая точка для импорта CSV и удаления файла: одна функция вместо
+        копий кода в нескольких местах.
+        """
+        self.groups_tree.clear()
+        self.files_tree.clear()
+
+        if not self._groups:
+            self.recreate_btn.setEnabled(False)
+            return
+
+        for index, group in enumerate(self._groups):
+            item = QTreeWidgetItem([
+                group["filename"],
+                group.get("match", "SHA256"),
+                str(len(group["files"])),
+            ])
+            item.setData(0, Qt.UserRole, index)
+            item.setToolTip(0, group["filename"])
+            self.groups_tree.addTopLevelItem(item)
+
+        last = self.groups_tree.topLevelItemCount() - 1
+        target = max(0, min(select_index, last))
+        self.groups_tree.setCurrentItem(self.groups_tree.topLevelItem(target))
+        self.recreate_btn.setEnabled(True)
+
+    def _count_missing(self) -> int:
+        """Сколько файлов из списка уже отсутствует на диске."""
+        return sum(
+            1
+            for group in self._groups
+            for entry in group["files"]
+            if not os.path.isfile(entry["path"])
+        )
+
+    # ------------------------------------------------------------------
+    def on_import_csv(self) -> None:
+        """Загружает ранее сохранённый отчёт о дубликатах."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Импорт отчёта о дубликатах", "",
+            "CSV-отчёты (*.csv);;Все файлы (*.*)",
+        )
+        if not path:
+            return
+
+        try:
+            groups = duplsearch.read_csv(path)
+        except duplsearch.CsvImportError as exc:
+            QMessageBox.warning(self, "Не удалось импортировать", str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self, "Ошибка чтения",
+                f"Файл не удалось прочитать:\n{exc}"
+            )
+            return
+
+        kept = self.exclusions.filter_groups(groups)
+        hidden = len(groups) - len(kept)
+        self._groups = kept
+        self._hidden_by_exclusion = hidden
+        self._refill_groups()
+        self._update_excluded_button()
+        print(f"[ИМПОРТ] {path}: групп {len(self._groups)}")
+
+        total_files = sum(len(g["files"]) for g in self._groups)
+        missing = self._count_missing()
+        text = (f"Импортировано групп: {len(self._groups)}, "
+                f"файлов: {total_files}.")
+        if missing:
+            text += (f" Отсутствует на диске: {missing} — "
+                     f"они помечены серым.")
+        self.status_label.setText(text)
+
+    # ------------------------------------------------------------------
+    def on_recreate_csv(self) -> None:
+        """Сохраняет отчёт заново по текущему списку групп."""
+        if not self._groups:
+            QMessageBox.information(
+                self, "Нечего сохранять",
+                "Список групп пуст — сначала выполните поиск или импорт."
+            )
+            return
+
+        suggested = os.path.join(
+            self.dir_field.text() or os.getcwd(),
+            duplsearch.DEFAULT_CSV_NAME,
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить отчёт", suggested,
+            "CSV-отчёты (*.csv);;Все файлы (*.*)",
+        )
+        if not path:
+            return
+
+        try:
+            saved = duplsearch.write_csv(self._groups, path)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(
+                self, "Ошибка записи",
+                f"Не удалось сохранить отчёт:\n{exc}"
+            )
+            return
+
+        missing = self._count_missing()
+        groups_count = len(self._groups)
+        files_count = sum(len(g["files"]) for g in self._groups)
+        print(f"[CSV] {saved}: групп {groups_count}, файлов {files_count}")
+
+        text = (f"Отчёт пересоздан: групп {groups_count}, "
+                f"файлов {files_count}.")
+        if missing:
+            text += f" Отсутствующих на диске: {missing}."
+        self.status_label.setText(text)
+
+        QMessageBox.information(
+            self, "Отчёт сохранён",
+            f"{saved}\n\nГрупп: {groups_count}\nФайлов: {files_count}"
+            + (f"\nОтсутствует на диске: {missing}" if missing else "")
+        )
+
+    # ------------------------------------------------------------------
     def _on_group_changed(self, current, _previous) -> None:
         self.files_tree.clear()
         if current is None:
@@ -283,18 +658,33 @@ class DuplicatesTab(BaseTab):
 
             # Кнопка «Удалить» в строке: не нужно выделять файл, чтобы
             # отправить его в Корзину.
+            exists = entry.get("exists", os.path.isfile(entry["path"]))
+
             button = QPushButton("Удалить", self.files_tree)
             button.setFixedWidth(100)
             button.setFixedHeight(24)
+            button.setEnabled(exists)
             button.setToolTip(
-                "Отправить этот файл в Корзину"
-                if _HAS_SEND2TRASH
-                else "Удалить этот файл с диска"
+                ("Отправить этот файл в Корзину"
+                 if _HAS_SEND2TRASH
+                 else "Удалить этот файл с диска")
+                if exists
+                else "Файла уже нет на диске — удалять нечего"
             )
             button.clicked.connect(
                 lambda _checked=False, p=entry["path"]: self.on_delete_path(p)
             )
             self.files_tree.setItemWidget(item, COL_FILE_ACTION, button)
+
+            # Файл, импортированный из отчёта, мог быть удалён раньше:
+            # помечаем строку, чтобы это было видно сразу.
+            if not exists:
+                for column in range(COL_FILE_ACTION):
+                    item.setForeground(column, QBrush(_theme_color("text_disabled")))
+                item.setToolTip(
+                    COL_FILE_PATH,
+                    f"{entry['path']}\nФайл отсутствует на диске"
+                )
 
     def _on_file_double_clicked(self, item, _column) -> None:
         path = item.data(0, Qt.UserRole)
@@ -368,33 +758,30 @@ class DuplicatesTab(BaseTab):
         QMessageBox.information(self, "Готово", "Файл удалён.")
 
     def _remove_from_results(self, path: str) -> None:
+        """Убирает файл из результатов и перерисовывает таблицы.
+
+        Группа из одного файла перестаёт быть группой дубликатов и
+        удаляется целиком.
+        """
         for group in list(self._groups):
             group["files"] = [f for f in group["files"] if f["path"] != path]
             if len(group["files"]) <= 1:
                 self._groups.remove(group)
 
-        current_index = None
+        current_index = 0
         if self.groups_tree.currentItem() is not None:
-            current_index = self.groups_tree.currentItem().data(0, Qt.UserRole)
+            stored = self.groups_tree.currentItem().data(0, Qt.UserRole)
+            if isinstance(stored, int):
+                current_index = stored
 
-        self.groups_tree.clear()
-        self.files_tree.clear()
+        self._refill_groups(current_index)
 
         if not self._groups:
             self.status_label.setText("Дубликатов больше не осталось.")
             return
 
-        for index, group in enumerate(self._groups):
-            item = QTreeWidgetItem([
-                group["filename"],
-                group.get("match", "SHA256"),
-                str(len(group["files"])),
-            ])
-            item.setData(0, Qt.UserRole, index)
-            self.groups_tree.addTopLevelItem(item)
-
-        target = 0
-        if isinstance(current_index, int) and current_index < self.groups_tree.topLevelItemCount():
-            target = current_index
-        self.groups_tree.setCurrentItem(self.groups_tree.topLevelItem(target))
-        self.status_label.setText(f"Осталось групп: {len(self._groups)}.")
+        missing = self._count_missing()
+        text = f"Осталось групп: {len(self._groups)}."
+        if missing:
+            text += f" Отсутствует на диске: {missing}."
+        self.status_label.setText(text)
