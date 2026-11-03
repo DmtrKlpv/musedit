@@ -15,7 +15,9 @@ from .tabs import (
     UpdatePlaylistTab,
 )
 
-from .version import APP_TITLE, APP_VERSION, ORGANIZATION  # noqa: E402
+from .version import (  # noqa: E402
+    APP_TITLE, APP_VERSION, APP_VERSION_FULL, ORGANIZATION,
+)
 COLOR_LINK = "#5b21b6"
 COLOR_PRIMARY = "#2563eb"
 COLOR_PRIMARY_HOVER = "#1d4ed8"
@@ -71,7 +73,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.update_playlist_tab, "Обновление плейлиста")
         self.tabs.addTab(self.playlist_search_tab, "Поиск по плейлисту")
         self.tabs.addTab(self.tags_tab, "Исправление тегов MP3")
-        self.tabs.addTab(self.cue_tab, "Конвертер CUE в MP3")
+        self.tabs.addTab(self.cue_tab, "Конвертер CUE в треки")
         self.tabs.addTab(self.duplicates_tab, "Поиск дубликатов")
 
         self.console = ConsoleView(self.splitter)
@@ -144,13 +146,14 @@ class MainWindow(QMainWindow):
     def _show_about(self) -> None:
         QMessageBox.about(
             self, "О программе",
-            f"<b>{APP_TITLE}</b><br><br>"
+            f"<b>{APP_TITLE}</b><br>"
+            f"Версия {APP_VERSION_FULL}<br><br>"
             "Единая панель для пяти инструментов:<br>"
             ""
             "• скачивание треков из Яндекс.Музыки с готовым плейлистом;<br>"
             ""
             "• исправление кодировки тегов MP3;<br>"
-            "• конвертация FLAC/APE + CUE в MP3;<br>"
+            "• конвертация FLAC/APE + CUE в треки FLAC или MP3;<br>"
             "• поиск дубликатов с удалением в Корзину.<br><br>"
             f"Все тяжёлые операции выполняются в фоновых потоках.<br><br>"
             f"{ORGANIZATION}"

@@ -15,13 +15,14 @@ import tarfile
 from pathlib import Path
 from zipfile import ZipFile
 
+from mutagen import File as MutagenFile
 from mutagen.mp3 import MP3
 from mutagen.id3 import TIT2, TPE1, TALB, TDRC, TCON, TRCK, APIC
-from mutagen.flac import FLAC
+from mutagen.flac import FLAC, Picture
 from mutagen.apev2 import APEv2
 
 from ..progress import as_progress
-from ..subproc import run as run_process
+from ..subproc import popen
 
 _ACTIVE_PROGRESS = None
 
@@ -33,7 +34,6 @@ _ACTIVE_PROGRESS = None
 # Понятные подписи вместо «v0» и «320». Ключ — то, что видит пользователь,
 # значение — (режим, параметр): ("vbr", 0) → LAME VBR V0.
 QUALITY_PRESETS = {
-    "CBR 320 kbps — максимум": ("cbr", 320),
     "VBR V0 — максимум, ~245 kbps": ("vbr", 0),
     "VBR V1 — очень высокое, ~225 kbps": ("vbr", 1),
     "VBR V2 — оптимальное, ~190 kbps": ("vbr", 2),
@@ -42,6 +42,7 @@ QUALITY_PRESETS = {
     "VBR V5 — ниже среднего, ~130 kbps": ("vbr", 5),
     "VBR V6 — низкое, ~115 kbps": ("vbr", 6),
     "VBR V8 — очень низкое, ~85 kbps": ("vbr", 8),
+    "CBR 320 kbps — максимум": ("cbr", 320),
     "CBR 256 kbps — очень высокое": ("cbr", 256),
     "CBR 224 kbps — высокое": ("cbr", 224),
     "CBR 192 kbps — стандарт": ("cbr", 192),
@@ -50,7 +51,55 @@ QUALITY_PRESETS = {
     "CBR 96 kbps — минимальное": ("cbr", 96),
 }
 
-DEFAULT_QUALITY = "CBR 320 kbps — максимум"
+DEFAULT_QUALITY = "VBR V0 — максимум, ~245 kbps"
+
+# ---------------------------------------------------------------------------
+# Формат треков на выходе
+# ---------------------------------------------------------------------------
+
+FORMAT_FLAC = "flac"
+FORMAT_MP3 = "mp3"
+
+# Ключ — подпись в списке, значение — внутренний код
+FORMAT_LABELS = {
+    "FLAC — без потерь": FORMAT_FLAC,
+    "MP3 — VBR или CBR": FORMAT_MP3,
+}
+
+# FLAC по умолчанию: альбом режется без потери качества, а MP3 из него
+# можно сделать позже — обратное невозможно.
+DEFAULT_FORMAT_LABEL = "FLAC — без потерь"
+
+
+def resolve_format(value) -> str:
+    """Приводит выбор пользователя к внутреннему коду формата.
+
+    Принимает и подпись из списка («FLAC — без потерь»), и код («flac»).
+    Неизвестное значение заменяется на формат по умолчанию.
+    """
+    if value in FORMAT_LABELS:
+        return FORMAT_LABELS[value]
+    if value in FORMAT_LABELS.values():
+        return value
+    return FORMAT_LABELS[DEFAULT_FORMAT_LABEL]
+
+
+def extension(fmt: str) -> str:
+    """Расширение файлов треков для формата."""
+    return ".flac" if fmt == FORMAT_FLAC else ".mp3"
+
+
+def encode_args_for(fmt: str, quality: str = DEFAULT_QUALITY):
+    """Аргументы FFmpeg для выбранного формата и качества.
+
+    Для FLAC качество не указывается: сжатие без потерь, уровень влияет
+    только на размер файла, а не на звук. Для MP3 — обычный выбор VBR/CBR.
+    """
+    if fmt == FORMAT_FLAC:
+        # Уровень сжатия по умолчанию (5) — разумный баланс скорости
+        # и размера; на звук он не влияет.
+        return ["-c:a", "flac", "-compression_level", "5"]
+    return encode_args(quality)
 
 # Старые значения CLI: принимаем, чтобы не ломать скрипты пользователей.
 _LEGACY_QUALITY = {
@@ -91,7 +140,11 @@ def create_parser():
                         choices=list(QUALITY_PRESETS) + list(_LEGACY_QUALITY),
                         help="Качество MP3: VBR V0…V8 или CBR 320…96")
     parser.add_argument("--cover", default="",
-                        help="Ссылка на обложку (http/https) для встраивания в теги")
+                        help="Путь к файлу обложки (JPEG/PNG/GIF/WEBP/BMP) "
+                             "для встраивания в теги")
+    parser.add_argument("-f", "--format", default=DEFAULT_FORMAT_LABEL,
+                        choices=list(FORMAT_LABELS) + list(FORMAT_LABELS.values()),
+                        help="Формат треков: FLAC (по умолчанию) или MP3")
     parser.add_argument("--debug", action="store_true", help="Включить отладочный вывод")
     return parser
 
@@ -276,57 +329,245 @@ def extract_cover(audio_path: Path, base_dir: Path):
     return None
 
 
-def download_cover(url: str):
-    """Скачивает обложку по ссылке. Возвращает (bytes, mime) или (None, None).
+# Расширения, которые принимаем как обложку
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
 
-    Ошибки не пробрасываем: недоступная картинка не должна срывать
-    конвертацию всего альбома — просто останемся без обложки.
+
+def _looks_like_image(data: bytes) -> bool:
+    """Проверяет сигнатуру файла, а не расширение.
+
+    Расширение легко переименовать: «cover.jpg», внутри которого лежит
+    HTML-страница, встроился бы в теги и сломал отображение у плеера.
     """
-    url = (url or "").strip()
-    if not url:
+    return (
+        data.startswith(b"\xff\xd8\xff")          # JPEG
+        or data.startswith(b"\x89PNG\r\n\x1a\n")   # PNG
+        or data.startswith(b"GIF8")                 # GIF
+        or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")  # WEBP
+        or data.startswith(b"BM")                   # BMP
+    )
+
+
+def load_cover_file(path_value: str):
+    """Читает обложку из файла на диске. Возвращает (bytes, mime) или (None, None).
+
+    Пустое значение — не ошибка: обложка просто берётся из тегов
+    исходника или из cover.jpg рядом с альбомом.
+
+    Ошибки не пробрасываем: недоступная или битая картинка не должна
+    срывать конвертацию всего альбома.
+    """
+    path_value = (path_value or "").strip()
+    if not path_value:
         return None, None
 
-    if not url.lower().startswith(("http://", "https://")):
-        print(f"[WARN] Ссылка на обложку должна начинаться с http:// или "
-              f"https://, получено: {url}")
+    # Заодно ловим случай, когда в поле вставили адрес сайта:
+    # подсказываем, что нужен файл, а не ссылка.
+    if path_value.lower().startswith(("http://", "https://")):
+        print("[WARN] Указана ссылка вместо файла. Сохраните картинку "
+              "на диск и выберите её кнопкой «Файл…» — обложка "
+              "не встроена.")
         return None, None
 
-    print(f"[INFO] Загрузка обложки: {url}")
+    path = Path(path_value).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+
+    if not path.exists():
+        print(f"[WARN] Файл обложки не найден: {path}")
+        return None, None
+
+    if not path.is_file():
+        print(f"[WARN] Указан не файл, а папка: {path}")
+        return None, None
+
     try:
-        request = urllib.request.Request(
-            url, headers={"User-Agent": "Mozilla/5.0 (MusEdit)"}
-        )
-        with urllib.request.urlopen(request, timeout=20) as response:
-            data = response.read()
-
-        if not data:
-            print("[WARN] Обложка пустая, пропускаю.")
-            return None, None
-
-        # Проверяем, что это действительно картинка, а не HTML-страница
-        mime = get_mime_type(data)
-        if not (data.startswith(b"\xff\xd8\xff")
-                or data.startswith(b"\x89PNG\r\n\x1a\n")
-                or data.startswith(b"GIF8")
-                or data[:4] == b"RIFF"):
-            print("[WARN] По ссылке не картинка (JPEG/PNG/GIF/WEBP), "
-                  "обложка не встроена.")
-            return None, None
-
-        size_kb = round(len(data) / 1024, 1)
-        print(f"[INFO] Обложка загружена: {size_kb} КБ, {mime}")
-        return data, mime
-    except Exception as exc:  # noqa: BLE001
-        print(f"[WARN] Не удалось загрузить обложку: {exc}")
+        data = path.read_bytes()
+    except OSError as exc:
+        print(f"[WARN] Не удалось прочитать обложку: {exc}")
         return None, None
+
+    if not data:
+        print("[WARN] Файл обложки пустой, пропускаю.")
+        return None, None
+
+    if not _looks_like_image(data):
+        print(f"[WARN] Файл {path.name} не похож на картинку "
+              f"(нужен JPEG, PNG, GIF, WEBP или BMP) — обложка не встроена.")
+        return None, None
+
+    mime = get_mime_type(data)
+    size_kb = round(len(data) / 1024, 1)
+    print(f"[INFO] Обложка: {path.name}, {size_kb} КБ, {mime}")
+    return data, mime
 
 
 def get_mime_type(data: bytes) -> str:
+    """MIME по сигнатуре файла.
+
+    Раньше всё, что не JPEG и не PNG, объявлялось image/jpeg — из-за
+    этого GIF и WEBP встраивались с неверным типом, и плееры могли
+    отказаться показывать обложку.
+    """
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
-    elif data.startswith(b"\x89PNG\r\n\x1a\n"):
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
+    if data.startswith(b"GIF8"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data.startswith(b"BM"):
+        return "image/bmp"
     return "image/jpeg"
+
+
+def _source_duration(path: Path) -> float:
+    """Длительность исходного аудио в секундах (0, если не определилась).
+
+    Нужна для прогресса внутри последнего трека: его конец совпадает
+    с концом файла, и без этого полоса стояла бы на месте.
+    """
+    try:
+        audio = MutagenFile(path)
+        if audio is not None and audio.info is not None:
+            return float(audio.info.length)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _encode_track(ffmpeg_path: str, source_path: Path, out_path: Path,
+                  start_sec: float, end_sec, enc_args, track_seconds: float,
+                  report, index: int, total_tracks: int) -> tuple[bool, str]:
+    """Кодирует один трек и отдаёт прогресс внутри него.
+
+    Возвращает (успех, текст ошибки).
+
+    Почему -ss стоит ДО -i
+    ----------------------
+    Позиция -ss перед -i означает «перейти к этому месту во входном файле»:
+    FFmpeg пользуется индексом контейнера и начинает декодировать сразу
+    с нужной секунды. Если поставить -ss после -i, FFmpeg обязан
+    декодировать файл с самого начала и выбрасывать всё до точки разреза.
+    На 30-минутном FLAC последний трек кодировался в 6 раз дольше первого,
+    а на часовом винил-рипе это выглядело как зависание на 87%.
+
+    -t задаёт длительность куска, а не абсолютное время конца: при
+    -ss перед -i метки времени начинаются с нуля, и -to отсчитал бы
+    не от начала трека, а от начала файла.
+
+    -nostdin запрещает FFmpeg читать stdin. В графическом приложении
+    stdin не подключён к терминалу, и без флага процесс может ждать
+    ввода, из-за чего конвертация останавливается без ошибки.
+    """
+    cmd = [ffmpeg_path, "-nostdin", "-hide_banner", "-loglevel", "error"]
+
+    if start_sec and start_sec > 0:
+        cmd.extend(["-ss", f"{start_sec:.3f}"])
+    cmd.extend(["-i", str(source_path)])
+
+    if end_sec is not None:
+        piece = max(0.0, float(end_sec) - float(start_sec))
+        cmd.extend(["-t", f"{piece:.3f}"])
+
+    cmd.extend([*enc_args, "-progress", "pipe:1", "-nostats",
+                "-y", str(out_path)])
+
+    try:
+        process = popen(cmd, stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, text=True,
+                        encoding="utf-8", errors="replace", bufsize=1)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"не удалось запустить FFmpeg: {exc}"
+
+    noise = []
+    try:
+        for line in process.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("out_time_us="):
+                # FFmpeg отдаёт микросекунды; делим на длительность трека.
+                raw = line.split("=", 1)[1]
+                try:
+                    done_sec = int(raw) / 1_000_000
+                except ValueError:
+                    continue
+                if track_seconds > 0:
+                    fraction = min(1.0, max(0.0, done_sec / track_seconds))
+                    # Сдвигаем на долю трека: полоса движется и внутри него,
+                    # а не только между треками.
+                    report.update(index - 1 + fraction, total_tracks,
+                                  f"{index:02d}/{total_tracks}")
+            elif not line.startswith(("frame=", "fps=", "bitrate=", "total_size=",
+                                      "out_time=", "dup_frames=", "drop_frames=",
+                                      "speed=", "progress=")):
+                noise.append(line)
+    finally:
+        try:
+            process.stdout.close()
+        except Exception:
+            pass
+        code = process.wait()
+
+    if code != 0:
+        detail = noise[-1][:200] if noise else f"код возврата {code}"
+        return False, detail
+    return True, ""
+
+
+def _write_mp3_tags(path: Path, track: dict, album_meta: dict,
+                    number: int, cover_data, cover_mime: str) -> None:
+    """Пишет ID3v2.4 (UTF-8) в MP3 и встраивает обложку в APIC-кадр."""
+    audio = MP3(path)
+    if audio.tags is None:
+        audio.add_tags()
+    audio.tags.version = (2, 4, 0)
+
+    enc = 3  # UTF-8
+    audio.tags.add(TIT2(encoding=enc, text=[track.get("TITLE", "")]))
+    audio.tags.add(TPE1(encoding=enc, text=[track.get("PERFORMER", "")]))
+    audio.tags.add(TALB(encoding=enc, text=[album_meta.get("TITLE", "")]))
+    audio.tags.add(TDRC(encoding=enc, text=[album_meta.get("DATE", "")]))
+    audio.tags.add(TCON(encoding=enc, text=[album_meta.get("GENRE", "")]))
+    audio.tags.add(TRCK(encoding=enc, text=[f"{number:02d}"]))
+
+    if cover_data:
+        audio.tags.add(APIC(encoding=enc, mime=cover_mime, type=3,
+                            desc="Cover", data=cover_data))
+
+    audio.save(v2_version=4)
+
+
+def _write_flac_tags(path: Path, track: dict, album_meta: dict,
+                     number: int, cover_data, cover_mime: str) -> None:
+    """Пишет Vorbis-комментарии и картинку в FLAC.
+
+    У FLAC своя схема тегов (Vorbis comments), а обложка хранится не в
+    APIC-кадре, а отдельным блоком PICTURE — поэтому запись отличается
+    от MP3 и вынесена в отдельную функцию.
+    """
+    audio = FLAC(path)
+
+    audio["title"] = track.get("TITLE", "")
+    audio["artist"] = track.get("PERFORMER", "")
+    audio["album"] = album_meta.get("TITLE", "")
+    audio["date"] = album_meta.get("DATE", "")
+    audio["genre"] = album_meta.get("GENRE", "")
+    audio["tracknumber"] = f"{number:02d}"
+
+    if cover_data:
+        picture = Picture()
+        picture.type = 3          # front cover
+        picture.mime = cover_mime
+        picture.desc = "Cover"
+        picture.data = cover_data
+        # add_picture сам удаляет прежние картинки того же типа
+        audio.clear_pictures()
+        audio.add_picture(picture)
+
+    audio.save()
 
 
 def main(args=None, progress=None):
@@ -374,14 +615,24 @@ def main(args=None, progress=None):
     out_dir = Path(args.output).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    enc_args = encode_args(getattr(args, "quality", DEFAULT_QUALITY))
+    # Формат выбирается в интерфейсе; по умолчанию FLAC.
+    out_format = resolve_format(getattr(args, "format", DEFAULT_FORMAT_LABEL))
+    out_ext = extension(out_format)
+    enc_args = encode_args_for(
+        out_format, getattr(args, "quality", DEFAULT_QUALITY)
+    )
 
+    format_name = "FLAC" if out_format == FORMAT_FLAC else "MP3"
     total_tracks = len(tracks)
-    print(f"\n[INFO] Обработка: {source_path.name} -> MP3")
+    print(f"\n[INFO] Обработка: {source_path.name} -> {format_name}")
     print("-" * 60)
 
     report.start(total_tracks, f"Нарезка: {source_path.name}")
     failed = 0
+
+    # Полная длительность исходника: нужна, чтобы последний трек тоже
+    # показывал прогресс (у него нет следующей метки и, значит, конца).
+    source_seconds = _source_duration(source_path)
 
     for i, track in enumerate(tracks, start=1):
         track_title = track.get("TITLE", f"Track {i}")
@@ -392,32 +643,31 @@ def main(args=None, progress=None):
         print(f"{i:02d}/{total_tracks}: {track_performer} - {track_title}")
         report.update(i - 1, total_tracks, f"{track_performer} — {track_title}")
 
-        cmd = [ffmpeg_path, "-i", str(source_path)]
-        if start_sec > 0:
-            cmd.extend(["-ss", f"{start_sec:.3f}"])
+        # Длительность куска — для расчёта прогресса внутри трека.
         if end_sec is not None:
-            cmd.extend(["-to", f"{end_sec:.3f}"])
-        cmd.extend([*enc_args, "-y", "-loglevel", "error", str(out_dir / f"track_{i:02d}.mp3")])
+            track_seconds = max(0.0, end_sec - start_sec)
+        elif source_seconds > 0:
+            track_seconds = max(0.0, source_seconds - start_sec)
+        else:
+            track_seconds = 0.0
 
-        try:
-            # Вывод FFmpeg не нужен: ход работы виден на полосе прогресса.
-            # run_process подавляет консольное окно на Windows — иначе
-            # на каждый трек всплывало бы чёрное окно командной строки.
-            run_process(cmd, check=True, capture_output=True)
-        except subprocess.CalledProcessError as exc:
+        ok, error = _encode_track(
+            ffmpeg_path, source_path, out_dir / f"track_{i:02d}{out_ext}",
+            start_sec, end_sec, enc_args, track_seconds,
+            report, i, total_tracks,
+        )
+        if not ok:
             print(f"  [FAIL] Ошибка FFmpeg на треке {i}")
-            if exc.stderr:
-                detail = exc.stderr.decode("utf-8", "replace").strip()
-                if detail:
-                    print(f"         {detail.splitlines()[-1][:200]}")
+            if error:
+                print(f"         {error}")
             failed += 1
             continue
 
     report.update(total_tracks, total_tracks, "Запись метаданных")
 
     # Обложка: сначала ссылка из поля, затем теги/файл рядом с альбомом.
-    cover_url = getattr(args, "cover", "") or ""
-    cover_data, cover_mime = download_cover(cover_url)
+    cover_file = getattr(args, "cover", "") or ""
+    cover_data, cover_mime = load_cover_file(cover_file)
 
     if not cover_data:
         cover_data = extract_cover(source_path, cue_dir)
@@ -433,33 +683,20 @@ def main(args=None, progress=None):
     print("[INFO] Запись метаданных...")
 
     for i, track in enumerate(tracks, start=1):
-        mp3_file = out_dir / f"track_{i:02d}.mp3"
-        if not mp3_file.exists():
+        track_file = out_dir / f"track_{i:02d}{out_ext}"
+        if not track_file.exists():
             continue
 
-        audio = MP3(mp3_file)
-        if audio.tags is None:
-            audio.add_tags()
-        audio.tags.version = (2, 4, 0)
-
-        enc = 3  # UTF-8
-        audio.tags.add(TIT2(encoding=enc, text=[track.get("TITLE", "")]))
-        audio.tags.add(TPE1(encoding=enc, text=[track.get("PERFORMER", "")]))
-        audio.tags.add(TALB(encoding=enc, text=[album_meta.get("TITLE", "")]))
-        audio.tags.add(TDRC(encoding=enc, text=[album_meta.get("DATE", "")]))
-        audio.tags.add(TCON(encoding=enc, text=[album_meta.get("GENRE", "")]))
-        audio.tags.add(TRCK(encoding=enc, text=[f"{i:02d}"]))
-
-        if cover_data:
-            audio.tags.add(APIC(encoding=enc, mime=cover_mime, type=3, desc="Cover", data=cover_data))
-
-        audio.save(v2_version=4)
+        if out_format == FORMAT_FLAC:
+            _write_flac_tags(track_file, track, album_meta, i, cover_data, cover_mime)
+        else:
+            _write_mp3_tags(track_file, track, album_meta, i, cover_data, cover_mime)
 
         # Переименование
         clean_title = re.sub(r'[<>:"/\\|?*]', "", track.get("TITLE", "Track")).strip()
-        new_name = f"{i:02d} - {clean_title}.mp3"
+        new_name = f"{i:02d} - {clean_title}{out_ext}"
         final_path = out_dir / new_name
-        os.replace(mp3_file, final_path)
+        os.replace(track_file, final_path)
 
     print(f"[DONE] Альбом готов в: {out_dir}")
     report.finish(f"Готово: {total_tracks} треков" if not failed

@@ -4,7 +4,7 @@
    вместо «v0» и «320».
 2. Поле обложки: ссылка на картинку встраивается в теги.
 3. Консоль: каждая строка появляется один раз, а не дважды.
-4. Заголовок окна: «MusEdit 1.9».
+4. Заголовок окна содержит версию из version.py.
 """
 
 import os
@@ -94,33 +94,37 @@ ok("VBR-пресетов восемь", len(vbr) == 8, str(len(vbr)))
 ok("CBR-пресетов семь", len(cbr) == 7, str(len(cbr)))
 
 # ------------------------------------------------------------------ 2. обложка
-OUT.write("\n--- 2. Загрузка обложки ---\n")
+OUT.write("\n--- 2. Обложка с диска ---\n")
 tmp = tempfile.mkdtemp(prefix="cover_")
 cover_path = make_png(os.path.join(tmp, "cover.png"))
 OUT.write(f"  тестовая картинка: {os.path.getsize(cover_path)} байт\n")
 
-# локальный HTTP-сервер
-import functools
-import http.server
-import threading
-
-handler = functools.partial(http.server.SimpleHTTPRequestHandler,
-                            directory=tmp)
-server = http.server.HTTPServer(("127.0.0.1", 0), handler)
-port = server.server_address[1]
-threading.Thread(target=server.serve_forever, daemon=True).start()
-
-data, mime = cue2mp3.download_cover(f"http://127.0.0.1:{port}/cover.png")
-OUT.write(f"  загружено: {len(data) if data else 0} байт, mime={mime}\n")
-ok("обложка скачалась", data is not None)
+# Обложка читается с диска, а не скачивается по ссылке.
+data, mime = cue2mp3.load_cover_file(cover_path)
+OUT.write(f"  прочитано: {len(data) if data else 0} байт, mime={mime}\n")
+ok("обложка прочитана с диска", data is not None)
 ok("MIME определён как PNG", mime == "image/png", str(mime))
 ok("размер совпадает", len(data) == os.path.getsize(cover_path))
 
-bad, bad_mime = cue2mp3.download_cover("not-a-url")
-ok("невалидная ссылка отклонена", bad is None)
-empty, _ = cue2mp3.download_cover("")
-ok("пустая строка ничего не качает", empty is None)
-server.shutdown()
+# Ссылка вместо файла должна быть отклонена: конвертация
+# не зависит от сети и не делает запросов наружу.
+link_data, _ = cue2mp3.load_cover_file("https://example.com/cover.jpg")
+ok("ссылка отклонена", link_data is None)
+
+empty, _ = cue2mp3.load_cover_file("")
+ok("пустая строка ничего не читает", empty is None)
+
+missing, _ = cue2mp3.load_cover_file(os.path.join(tmp, "нет.jpg"))
+ok("отсутствующий файл отклонён", missing is None)
+
+fake = os.path.join(tmp, "fake.jpg")
+with open(fake, "wb") as stream:
+    stream.write(b"<html>this is not an image</html>")
+not_image, _ = cue2mp3.load_cover_file(fake)
+ok("файл с неверным содержимым отклонён", not_image is None)
+
+folder, _ = cue2mp3.load_cover_file(tmp)
+ok("папка вместо файла отклонена", folder is None)
 
 # ------------------------------------------------------------------ 3. консоль
 OUT.write("\n--- 3. Консоль: без дублей ---\n")
@@ -161,8 +165,10 @@ OUT.write(f"  APP_TITLE={APP_TITLE}\n")
 OUT.write(f"  ORGANIZATION={ORGANIZATION}\n")
 
 ok("имя приложения MusEdit", APP_NAME == "MusEdit")
-ok("версия 1.9", APP_VERSION == "1.9")
-ok("заголовок = «MusEdit 1.9»", APP_TITLE == "MusEdit 1.9")
+ok("версия из трёх чисел",
+   len(APP_VERSION.split(".")) == 3, APP_VERSION)
+ok("заголовок = имя + версия",
+   APP_TITLE == f"{APP_NAME} {APP_VERSION}", APP_TITLE)
 ok("организация совпадает", ORGANIZATION == "Dmkr Klpv, 2026"
    or ORGANIZATION == "Dmtr Klpv, 2026", ORGANIZATION)
 
@@ -170,13 +176,16 @@ from musicsuite.main_window import MainWindow
 
 window = MainWindow()
 OUT.write(f"  windowTitle(): {window.windowTitle()!r}\n")
-ok("окно названо MusEdit 1.9", window.windowTitle() == "MusEdit 1.9")
+ok("заголовок окна содержит версию",
+   APP_VERSION in window.windowTitle(), window.windowTitle())
 
 # поле обложки во вкладке
 tab = window.cue_tab
-ok("поле обложки есть", hasattr(tab, "cover_edit"))
-ok("подсказка поля обложки про http",
-   "http" in tab.cover_edit.placeholderText().lower())
+ok("поле обложки есть", hasattr(tab, "cover_field"))
+ok("поле обложки — выбор файла, а не ссылки",
+   hasattr(tab.cover_field, "file_btn"))
+ok("в подсказке упомянут файл",
+   "файл" in tab.cover_field.edit.placeholderText().lower())
 ok("селектор содержит 15 пресетов", tab.quality_combo.count() == 15,
    str(tab.quality_combo.count()))
 

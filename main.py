@@ -23,14 +23,18 @@ def main() -> int:
     from musicsuite.appicon import app_icon
     from musicsuite.main_window import MainWindow
     from musicsuite.theme import apply_theme
-    from musicsuite.version import APP_NAME, APP_VERSION, ORGANIZATION
+    from musicsuite.version import (
+        APP_NAME, APP_TITLE, APP_VERSION, ORGANIZATION,
+    )
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
 
     app = QApplication(sys.argv)
-    app.setApplicationName(f"{APP_NAME} {APP_VERSION}")
+    # Имя с версией — так приложение видно в диспетчере задач,
+    # а версия попадает в свойства EXE и в настройки QSettings.
+    app.setApplicationName(APP_TITLE)
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(ORGANIZATION)
 

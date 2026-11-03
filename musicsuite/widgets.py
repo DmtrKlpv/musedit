@@ -14,9 +14,12 @@ from PySide6.QtWidgets import (
 class PathField(QWidget):
     """Поле пути + кнопки выбора файла и/или папки через стандартный Проводник."""
 
-    def __init__(self, mode="dir", placeholder="", parent=None):
+    def __init__(self, mode="dir", placeholder="", parent=None,
+                 file_filter="Все файлы (*.*)", file_title="Выберите файл"):
         super().__init__(parent)
         self._mode = mode  # "dir" | "file" | "both" | "save"
+        self._file_filter = file_filter
+        self._file_title = file_title
 
         self.edit = QLineEdit(self)
         self.edit.setPlaceholderText(placeholder)
@@ -49,7 +52,7 @@ class PathField(QWidget):
 
     def _browse_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Выберите файл", self._start_dir(), "Все файлы (*.*)"
+            self, self._file_title, self._start_dir(), self._file_filter
         )
         if path:
             self.edit.setText(path)

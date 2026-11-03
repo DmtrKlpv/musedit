@@ -192,12 +192,14 @@ rows = tab.files_tree.topLevelItemCount()
 OUT.write(f"  строк в правой таблице: {rows}\n")
 ok("правая таблица заполнена", rows >= 2, str(rows))
 
-values = [tab.files_tree.topLevelItem(i).text(3) for i in range(rows)]
+match_col = [tab.files_tree.headerItem().text(i) for i in range(tab.files_tree.columnCount())].index("Совпадение")
+values = [tab.files_tree.topLevelItem(i).text(match_col) for i in range(rows)]
 OUT.write(f"  значения «Совпадение»: {values}\n")
 ok("тип совпадения заполнен у каждой строки",
    all(v in ("SHA256", "Имя", "Теги") for v in values), str(values))
 
-buttons = [tab.files_tree.itemWidget(tab.files_tree.topLevelItem(i), 4)
+from musicsuite.tabs.duplicates_tab import COL_FILE_ACTION
+buttons = [tab.files_tree.itemWidget(tab.files_tree.topLevelItem(i), COL_FILE_ACTION)
            for i in range(rows)]
 buttons = [b for b in buttons if isinstance(b, QPushButton)]
 OUT.write(f"  кнопок в строках: {len(buttons)}, "
