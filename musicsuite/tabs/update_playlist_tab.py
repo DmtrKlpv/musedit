@@ -105,7 +105,8 @@ class UpdatePlaylistTab(BaseTab):
         layout.addLayout(form)
 
         layout.addWidget(self.make_hint(
-            "Откройте плейлист и папку — сравнение выполнится сразу.\n"
+            "Откройте плейлист и папку, затем нажмите «Обновить плейлист» — "
+            "сравнение запускается только кнопкой.\n"
             "• Розовые строки слева — файла больше нет в папке: при обновлении "
             "он будет убран из плейлиста.\n"
             "• Светло-зелёные строки справа — новый файл, которого нет в плейлисте: "
@@ -189,10 +190,16 @@ class UpdatePlaylistTab(BaseTab):
 
         self.add_progress(layout)
 
-        # ---- автоматическое сканирование при выборе файлов ----
+        # Поля влияют только на доступность кнопки: сравнение запускается
+        # по нажатию, а не при каждом изменении пути. Раньше здесь висел
+        # textChanged, и выбор папки стартовал сканирование сам — на большой
+        # фонотеке это выглядело как зависание, которое нельзя отменить.
         self.playlist_field.edit.textChanged.connect(self._on_paths_changed)
         self.folder_field.edit.textChanged.connect(self._on_paths_changed)
         self.scan_finished.connect(self._on_scan_ready)
+
+        # Стартовое состояние кнопки: пустые поля — нажимать нечего.
+        self._on_paths_changed()
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -202,11 +209,44 @@ class UpdatePlaylistTab(BaseTab):
         return label
 
     def _on_paths_changed(self) -> None:
-        """Пересобирает списки, как только оба пути указывают на существующие объекты."""
+        """Проверяет пути и решает, доступна ли кнопка обновления.
+
+        Само сравнение НЕ запускается: иначе выбор папки стартовал бы
+        сканирование без ведома пользователя. На диске в сотни альбомов
+        такой прогон занимает минуты, кнопка «Обновить» остаётся серой,
+        и вкладка выглядит зависшей.
+        """
         playlist = self.playlist_field.text()
         folder = self.folder_field.text()
-        if playlist and folder and os.path.isfile(playlist) and os.path.isdir(folder):
-            self._start_scan(playlist, folder)
+
+        playlist_ok = bool(playlist) and os.path.isfile(playlist)
+        folder_ok = bool(folder) and os.path.isdir(folder)
+        ready = playlist_ok and folder_ok
+
+        # Кнопка активна, как только оба пути указывают на существующие
+        # объекты: сравнение запускается именно ей. Прежняя версия требовала
+        # ещё и непустой _entries, из-за чего кнопка не включалась никогда —
+        # список заполнялся только после сканирования, а сканирование
+        # начиналось лишь по кнопке.
+        if not self.is_busy():
+            self.run_btn.setEnabled(ready)
+
+        if not playlist and not folder:
+            self.detail_label.setText(
+                "Выберите плейлист и папку — затем нажмите «Обновить плейлист»."
+            )
+        elif playlist and not playlist_ok:
+            self.detail_label.setText(
+                "Файл плейлиста не найден — проверьте путь."
+            )
+        elif folder and not folder_ok:
+            self.detail_label.setText(
+                "Папка не найдена — проверьте путь."
+            )
+        elif ready and not self._entries:
+            self.detail_label.setText(
+                "Пути указаны. Нажмите «Обновить плейлист», чтобы сравнить."
+            )
 
     def _start_scan(self, playlist: str, folder: str) -> None:
         self.playlist_tree.clear()
@@ -238,8 +278,21 @@ class UpdatePlaylistTab(BaseTab):
 
         self._entries = list(result.entries)
         self._files = list(result.files)
+        self._scanned_paths = (
+            self.playlist_field.text(), self.folder_field.text()
+        )
         self._fill_tables()
         self.run_btn.setEnabled(True)
+
+        # Кнопку нажали до сравнения — сразу продолжаем записью.
+        # Вызов откладываем на следующий цикл событий: сейчас мы внутри
+        # обработчика сигнала succeeded, а _worker ещё не сброшен
+        # (это делается в finished). Без задержки start_task счёл бы,
+        # что операция идёт, и отказал бы в запуске записи.
+        if self._pending_apply:
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(0, self._apply_now)
 
     def _fill_tables(self) -> None:
         self.playlist_tree.clear()
@@ -312,14 +365,45 @@ class UpdatePlaylistTab(BaseTab):
                 self, "Файл не найден",
                 f"Плейлист не существует:\n{playlist}\n\n"
                 "Обновлять можно только существующий файл. Чтобы создать новый, "
+                "илист не существует:\n{playlist}\n\n"
+                "Обновлять можно только существующий файл. Чтобы создать новый, "
                 "используйте вкладку «Создание плейлистов».",
             )
             return
-        if not self._entries:
+        if self.is_busy():
+            # Не показываем модальное окно: пользователь и так видит прогресс.
+            self.detail_label.setText("Операция уже выполняется...")
+            return
+
+        folder = self.folder_field.text()
+        if not folder:
             QMessageBox.warning(
-                self, "Нет данных",
-                "Сначала откройте плейлист и папку для сканирования.",
+                self, "Не указана папка",
+                "Выберите папку с треками, по которой сверять плейлист.",
             )
+            return
+        if not os.path.isdir(folder):
+            QMessageBox.warning(
+                self, "Папка не найдена", f"Такой папки нет:\n{folder}"
+            )
+            return
+
+        # Сравнение запускается по кнопке. Если оно ещё не выполнялось
+        # или пути изменились с прошлого раза — сначала сканируем,
+        # а запись сделаем после, из _on_scan_ready.
+        if not self._entries or self._scanned_paths != (playlist, folder):
+            self._pending_apply = True
+            if not self._start_scan(playlist, folder):
+                self._pending_apply = False
+            return
+
+        self._apply_now()
+
+    def _apply_now(self) -> None:
+        """Записывает плейлист по уже собранному сравнению."""
+        playlist = self.playlist_field.text()
+        if self.is_busy():
+            self.detail_label.setText("Операция уже выполняется...")
             return
 
         # Новые файлы дописываем в конец, чтобы пользователь видел итог в таблице.

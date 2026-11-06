@@ -6,6 +6,7 @@ from .playlist_search_tab import PlaylistSearchTab
 from .tags_tab import TagsTab
 from .cue_tab import CueTab
 from .duplicates_tab import DuplicatesTab
+from .create_playlists_tab import CreatePlaylistsTab
 
 __all__ = [
     "DownloadHubTab",
@@ -14,4 +15,5 @@ __all__ = [
     "TagsTab",
     "CueTab",
     "DuplicatesTab",
+    "CreatePlaylistsTab",
 ]

@@ -96,6 +96,8 @@ ok("вкладка присутствует в окне", window.tabs.indexOf(ta
 tab.playlist_field.setText(playlist)
 tab.folder_field.setText(music)
 
+# Сравнение запускается кнопкой, а не выбором путей.
+tab.run_btn.click()
 for _ in range(80):
     pump(100)
     if not tab.is_busy():

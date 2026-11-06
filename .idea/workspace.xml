@@ -1,31 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="ChangeListManager">
-    <list default="true" id="28cc4df6-f196-4662-99cd-9acc6d38b46e" name="Changes" comment="bugs and funcs 1.9">
+    <list default="true" id="a559398d-b0f8-469e-b751-6d72097b6b03" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/MusEdit_1.9_v22_20261030_215723_db3189a95cc56380 (1).zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/MusEdit_1.9.30_v30_20261103_184659_c73f27fe5c6b.zip" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/MusEdit_1.9.31_v31_20261103_190312_a76bd81cd87f.zip" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/build/main/Analysis-00.toc" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/build/main/EXE-00.toc" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/build/main/PKG-00.toc" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/build/main/PYZ-00.pyz" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/build/main/PYZ-00.toc" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/build/main/base_library.zip" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/build/main/main.pkg" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/build/main/warn-main.txt" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/build/main/xref-main.html" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main.spec" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/musicsuite/engines/cue2mp3.py" beforeDir="false" afterPath="$PROJECT_DIR$/musicsuite/engines/cue2mp3.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/musicsuite/engines/duplsearch.py" beforeDir="false" afterPath="$PROJECT_DIR$/musicsuite/engines/duplsearch.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/music_suite.spec" beforeDir="false" afterPath="$PROJECT_DIR$/music_suite.spec" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/musicsuite/main_window.py" beforeDir="false" afterPath="$PROJECT_DIR$/musicsuite/main_window.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/musicsuite/tabs/cue_tab.py" beforeDir="false" afterPath="$PROJECT_DIR$/musicsuite/tabs/cue_tab.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/musicsuite/tabs/duplicates_tab.py" beforeDir="false" afterPath="$PROJECT_DIR$/musicsuite/tabs/duplicates_tab.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/musicsuite/tabs/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/musicsuite/tabs/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/musicsuite/tabs/update_playlist_tab.py" beforeDir="false" afterPath="$PROJECT_DIR$/musicsuite/tabs/update_playlist_tab.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/musicsuite/version.py" beforeDir="false" afterPath="$PROJECT_DIR$/musicsuite/version.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/musicsuite/widgets.py" beforeDir="false" afterPath="$PROJECT_DIR$/musicsuite/widgets.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_cue_converter.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_cue_converter.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/test_duplicates_modes.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_duplicates_modes.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_live_updates.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_live_updates.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/test_update_playlist_gui.py" beforeDir="false" afterPath="$PROJECT_DIR$/tests/test_update_playlist_gui.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -35,37 +23,38 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory">{
-  &quot;lastFilter&quot;: {
-    &quot;state&quot;: &quot;OPEN&quot;,
-    &quot;assignee&quot;: &quot;DmtrKlpv&quot;
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "DmtrKlpv"
   }
-}</component>
-  <component name="GithubPullRequestsUISettings">{
-  &quot;selectedUrlAndAccountId&quot;: {
-    &quot;url&quot;: &quot;https://github.com/DmtrKlpv/musedit&quot;,
-    &quot;accountId&quot;: &quot;fc0232ca-8cdf-4f67-91a0-42437dcd5ecf&quot;
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/DmtrKlpv/musedit",
+    "accountId": "fc0232ca-8cdf-4f67-91a0-42437dcd5ecf"
   }
-}</component>
-  <component name="ProjectColorInfo">{
-  &quot;associatedIndex&quot;: 3
-}</component>
-  <component name="ProjectId" id="3LQTi5k1uSJ7rMav0btrn5OCkRu" />
+}]]></component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "customColor": "",
+  "associatedIndex": 3
+}]]></component>
+  <component name="ProjectId" id="3LkV85Fi29w8VVJQPb1ZToj9o20" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;Python.main.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
-    &quot;last_opened_file_path&quot;: &quot;D:/py/musedit&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "git-widget-placeholder": "main"
   }
-}</component>
+}]]></component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
@@ -75,36 +64,12 @@
   </component>
   <component name="TaskManager">
     <task active="true" id="Default" summary="Default task">
-      <changelist id="28cc4df6-f196-4662-99cd-9acc6d38b46e" name="Changes" comment="" />
-      <created>1793385419032</created>
+      <changelist id="a559398d-b0f8-469e-b751-6d72097b6b03" name="Changes" comment="" />
+      <created>1793997891114</created>
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
-      <updated>1793385419032</updated>
+      <updated>1793997891114</updated>
     </task>
-    <task id="LOCAL-00001" summary="bugs and funcs 1.9">
-      <option name="closed" value="true" />
-      <created>1793398629461</created>
-      <option name="number" value="00001" />
-      <option name="presentableId" value="LOCAL-00001" />
-      <option name="project" value="LOCAL" />
-      <updated>1793398629461</updated>
-    </task>
-    <option name="localTasksCounter" value="2" />
     <servers />
-  </component>
-  <component name="Vcs.Log.Tabs.Properties">
-    <option name="TAB_STATES">
-      <map>
-        <entry key="MAIN">
-          <value>
-            <State />
-          </value>
-        </entry>
-      </map>
-    </option>
-  </component>
-  <component name="VcsManagerConfiguration">
-    <MESSAGE value="bugs and funcs 1.9" />
-    <option name="LAST_COMMIT_MESSAGE" value="bugs and funcs 1.9" />
   </component>
 </project>

@@ -138,6 +138,8 @@ utab.playlist_field.setText(playlist)
 utab.folder_field.setText(music)   # поле переименовано: папка для сканирования
 
 # Вкладка сканирует автоматически при выборе путей — ждём готовности списков
+# Сравнение запускается кнопкой.
+utab.run_btn.click()
 for _ in range(80):
     pump(100)
     if not utab.is_busy():

@@ -11,8 +11,8 @@ from .appicon import app_icon
 from .console import ConsoleView
 from . import theme as app_theme
 from .tabs import (
-    CueTab, DownloadHubTab, DuplicatesTab, PlaylistSearchTab, TagsTab,
-    UpdatePlaylistTab,
+    CreatePlaylistsTab, CueTab, DownloadHubTab, DuplicatesTab,
+    PlaylistSearchTab, TagsTab, UpdatePlaylistTab,
 )
 
 from .version import (  # noqa: E402
@@ -63,6 +63,7 @@ class MainWindow(QMainWindow):
         self.tabs.setDocumentMode(True)
 
         self.download_hub_tab = DownloadHubTab(self)
+        self.create_playlists_tab = CreatePlaylistsTab(self)
         self.tags_tab = TagsTab(self)
         self.cue_tab = CueTab(self)
         self.duplicates_tab = DuplicatesTab(self)
@@ -70,6 +71,7 @@ class MainWindow(QMainWindow):
         self.playlist_search_tab = PlaylistSearchTab(self)
 
         self.tabs.addTab(self.download_hub_tab, "Скачивание с Яндекс.Музыки")
+        self.tabs.addTab(self.create_playlists_tab, "Создание плейлиста")
         self.tabs.addTab(self.update_playlist_tab, "Обновление плейлиста")
         self.tabs.addTab(self.playlist_search_tab, "Поиск по плейлисту")
         self.tabs.addTab(self.tags_tab, "Исправление тегов MP3")
@@ -113,7 +115,7 @@ class MainWindow(QMainWindow):
     def _mark_primary_buttons(self) -> None:
         for tab in (self.download_hub_tab, self.tags_tab, self.cue_tab,
                     self.duplicates_tab, self.update_playlist_tab,
-                    self.playlist_search_tab):
+                    self.playlist_search_tab, self.create_playlists_tab):
             button = getattr(tab, "run_btn", None)
             if button is not None:
                 button.setObjectName("primary")
@@ -171,7 +173,8 @@ class MainWindow(QMainWindow):
         busy = [
             tab for tab in (self.download_hub_tab, self.tags_tab, self.cue_tab,
                             self.duplicates_tab, self.update_playlist_tab,
-                            self.playlist_search_tab)
+                            self.playlist_search_tab,
+                            self.create_playlists_tab)
             if tab.is_busy()
         ]
         if busy:

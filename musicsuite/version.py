@@ -29,7 +29,7 @@ MAJOR = 1
 MINOR = 9
 
 # Номер сборки = номер архива. Увеличивать при каждой выкладке.
-BUILD = 31
+BUILD = 36
 
 APP_NAME = "MusEdit"
 APP_VERSION = f"{MAJOR}.{MINOR}.{BUILD}"
